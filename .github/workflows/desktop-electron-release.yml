@@ -129,6 +129,8 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: release-assets/**/*
-          draft: true
+          draft: false
+          prerelease: false
+          make_latest: true
           generate_release_notes: true
           fail_on_unmatched_files: true
