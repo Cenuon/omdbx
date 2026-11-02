@@ -1270,6 +1270,9 @@ export default function App() {
   async function openTable(connection: DbxConnection, database: string, schema: string, table: string) {
     setActiveTarget({ connection, database, schema, table })
     setActiveTab("table")
+    setTabs((list) =>
+      list.map((tab) => (tab.id === "table" ? { ...tab, title: table, sub: schema } : tab)),
+    )
     setQuerySql(`SELECT * FROM "${table.replace(/"/g, '""')}" LIMIT 100;`)
     setBrowse((state) => ({ ...state, loading: true, error: null }))
     try {
