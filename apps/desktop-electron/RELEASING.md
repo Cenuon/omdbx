@@ -14,10 +14,12 @@ git push origin desktop-v0.1.0
 
 `desktop-electron-release` builds the DBX `dbx-web` backend on each OS, packages it into the Electron app, and attaches the installers to a **draft** GitHub Release.
 
+Publish the draft (Release page → Edit → Publish) to make the installers downloadable.
+
 Jobs:
 
 - macOS arm64 (`macos-14`)
-- macOS x64 (`macos-13`)
+- macOS x64 (`macos-14`, cross-built)
 - Windows x64 (`windows-latest`)
 - Linux x64 (`ubuntu-22.04`)
 
