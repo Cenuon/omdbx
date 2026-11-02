@@ -1,8 +1,8 @@
 const isWindows = process.platform === "win32"
 
 module.exports = {
-  appId: "io.dbx.desktop",
-  productName: "DBX",
+  appId: "io.omdbx.desktop",
+  productName: "OMDBX",
   directories: {
     output: "release",
     buildResources: "build",
@@ -32,7 +32,7 @@ module.exports = {
     category: "Development",
     icon: "build/icon.png",
     // scoped package name (@dbx-app/...) is illegal as an executable name
-    executableName: "dbx",
+    executableName: "omdbx",
   },
   nsis: {
     oneClick: false,

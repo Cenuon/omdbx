@@ -1,4 +1,4 @@
-# DBX Desktop · Electron + SolidJS prototype
+# OMDBX · Electron + SolidJS prototype
 
 一个真正跑在 Electron 窗口里的 DBX 工作台原型。不是网页稿，窗口控制、标题栏拖拽、主题、面板收起都是桌面应用行为。
 

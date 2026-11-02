@@ -1,6 +1,6 @@
 <div align="center">
 
-# DBX Desktop · Cenuon fork
+# OMDBX · Cenuon fork
 
 **自研 Electron + SolidJS 桌面界面，后端沿用上游 DBX（`dbx-web`）**
 
@@ -15,6 +15,8 @@
 > **这是 [`t8y2/dbx`](https://github.com/t8y2/dbx) 的个人 fork。**
 > 后端保持上游 `crates/dbx-web` 不变，只把桌面前端换成自己设计的 Electron + SolidJS 界面，放在新增目录 `apps/desktop-electron/`。
 > 上游发版时 `git fetch upstream && git merge upstream/main` 就能跟随升级，不用改上游业务代码。
+>
+> 应用名用 **OMDBX**：应用包名、数据目录、Linux 可执行名都和原版 DBX 完全错开，可以和原版同时安装。
 
 ## 截图
 

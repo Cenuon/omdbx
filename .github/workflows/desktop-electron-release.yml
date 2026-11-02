@@ -105,7 +105,7 @@ jobs:
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: DBX-${{ matrix.platform }}-${{ matrix.arch }}
+          name: OMDBX-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
             apps/desktop-electron/release/*.dmg
             apps/desktop-electron/release/*.zip

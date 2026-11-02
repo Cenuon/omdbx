@@ -154,7 +154,7 @@ export default function SettingsView(props: { onClose: () => void }) {
             </div>
 
             <section class="settings-card">
-              <SettingRow label="语言" description="更改 DBX 的显示语言">
+              <SettingRow label="语言" description="更改 OMDBX 的显示语言">
                 <Select label="简体中文" />
               </SettingRow>
               <SettingRow label="默认环境" description="选择新会话的启动位置">
