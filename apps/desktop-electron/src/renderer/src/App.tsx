@@ -40,8 +40,18 @@ import {
 } from "lucide-solid"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
 import SettingsView from "./SettingsView"
-import { getConnections } from "./dbx/client"
-import { historyItems, initialTabs, people, sqlFiles, type Person, type TabItem } from "./data"
+import { historyItems, initialTabs, sqlFiles, type TabItem } from "./data"
+import {
+  browseTable,
+  connectDb,
+  getConnections,
+  getDatabases,
+  getSchemas,
+  getTables,
+  type DbxColumn,
+  type DbxConnection,
+  type DbxQueryResult,
+} from "./dbx/client"
 
 type Theme = "light" | "dark"
 type Panel = "ai" | "sql" | "history"
@@ -244,19 +254,103 @@ function TreeLeaf(props: {
   )
 }
 
-function Sidebar(props: {
+interface SidebarProps {
   width: number
   maximized: boolean
   backendStatus: "checking" | "online" | "offline"
-  connectionCount: number
   onToggle: () => void
   onNewConnection: () => void
   onToast: (message: string) => void
   onMinimize: () => void
   onMaximize: () => void
   onClose: () => void
-}) {
-  const [activeTable, setActiveTable] = createSignal("sanguo_characters")
+  onOpenTable: (connection: DbxConnection, database: string, schema: string, table: string) => void
+}
+
+function Sidebar(props: SidebarProps) {
+  const [connections, setConnections] = createSignal<DbxConnection[]>([])
+  const [openConnections, setOpenConnections] = createSignal<Record<string, boolean>>({})
+  const [connectionData, setConnectionData] = createSignal<
+    Record<string, { databases: Array<{ name: string }>; tables: Record<string, string[]>; loading: boolean }>
+  >({})
+  const [activeKey, setActiveKey] = createSignal("")
+
+  onMount(() => {
+    if (props.backendStatus !== "online") return
+    getConnections()
+      .then(async (list) => {
+        setConnections(list)
+        const next: Record<string, boolean> = {}
+        let first = true
+        for (const conn of list) next[conn.id] = first || (next[conn.id] ?? false)
+        setOpenConnections(next)
+        if (list.length > 0) void loadConnection(list[0])
+        if (list.length > 0 && first) {
+          const conn = list[0]
+          setActiveKey(`${conn.id}|${conn.database || "main"}|${conn.default_schema || "main"}|`)
+        }
+      })
+      .catch(() => props.onToast("读取连接列表失败"))
+  })
+
+  createEffect(() => {
+    if (props.backendStatus === "online" && connections().length === 0) {
+      getConnections()
+        .then(async (list) => {
+          setConnections(list)
+          if (list.length > 0) void loadConnection(list[0])
+        })
+        .catch(() => undefined)
+    }
+  })
+
+  async function loadConnection(conn: DbxConnection) {
+    const id = conn.id
+    setConnectionData((data) => ({ ...data, [id]: { databases: [], tables: {}, loading: true } }))
+    try {
+      await connectDb(conn)
+      const databases = await getDatabases(id)
+      const info = { databases, tables: {} as Record<string, string[]>, loading: false }
+      setConnectionData((data) => ({ ...data, [id]: info }))
+      const database = conn.database || databases[0]?.name
+      if (database) {
+        const schemas = await getSchemas(id, database).catch(() => [] as string[])
+        const schema = conn.default_schema || schemas[0] || "main"
+        const tables = await getTables(id, database, schema).catch(() => [])
+        setConnectionData((data) => ({
+          ...data,
+          [id]: {
+            databases,
+            loading: false,
+            tables: { [`${database}|${schema}`]: tables.map((table) => table.name) },
+          },
+        }))
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      props.onToast(`${conn.name}: ${message}`)
+      setConnectionData((data) => ({ ...data, [id]: { databases: [], tables: {}, loading: false } }))
+    }
+  }
+
+  function toggleConnection(conn: DbxConnection) {
+    const next = !openConnections()[conn.id]
+    setOpenConnections((state) => ({ ...state, [conn.id]: next }))
+    if (next && !connectionData()[conn.id]) void loadConnection(conn)
+  }
+
+  function connectionTables(conn: DbxConnection, database: string, schema: string): string[] {
+    return connectionData()[conn.id]?.tables[`${database}|${schema}`] ?? []
+  }
+
+  function currentDatabase(conn: DbxConnection): string {
+    return conn.database || connectionData()[conn.id]?.databases[0]?.name || "main"
+  }
+
+  function currentSchema(conn: DbxConnection): string {
+    return conn.default_schema || "main"
+  }
+
   return (
     <aside class="sidebar" style={{ width: `${props.width}px`, "flex-basis": `${props.width}px` }}>
       <div class="side-top">
@@ -286,49 +380,97 @@ function Sidebar(props: {
         </button>
       </nav>
 
-      <button class="side-selected" onClick={() => props.onToast("切换数据库")}>
-        <Database size={15} />
-        <span class="side-selected-text">
-          <span>test_geometry</span>
-          <small>PostgreSQL_vh1q</small>
-        </span>
-        <Grip size={13} />
-      </button>
-
-      <div class="side-section-label">对象</div>
-
       <div class="tree-scroll">
-        <TreeGroup title="public" level={0} defaultOpen icon={<Folder size={14} />}>
-          <TreeGroup title="表" level={1} defaultOpen icon={<Folder size={13} />}>
-            <TreeLeaf title="geo_test" level={2} icon={<Table2 size={12} />} onClick={() => setActiveTable("geo_test")} />
-            <TreeLeaf
-              title="sanguo_characters"
-              level={2}
-              icon={<Table2 size={12} />}
-              active={activeTable() === "sanguo_characters"}
-              onClick={() => setActiveTable("sanguo_characters")}
-            />
-            <TreeLeaf title="spatial_ref_sys" level={2} icon={<Table2 size={12} />} onClick={() => setActiveTable("spatial_ref_sys")} />
-          </TreeGroup>
-          <TreeGroup title="视图" level={1} icon={<Folder size={13} />}>
-            <TreeLeaf title="暂无视图" level={2} muted />
-          </TreeGroup>
-          <TreeGroup title="存储过程" level={1} icon={<Braces size={13} />}>
-            <TreeLeaf title="refresh_geo_stats" level={2} icon={<Braces size={12} />} />
-          </TreeGroup>
-          <TreeGroup title="函数" level={1} icon={<Braces size={13} />}>
-            <TreeLeaf title="st_area_km2" level={2} icon={<Braces size={12} />} />
-          </TreeGroup>
-          <TreeGroup title="序列" level={1} icon={<List size={13} />}>
-            <TreeLeaf title="sanguo_characters_id_seq" level={2} icon={<List size={12} />} />
-          </TreeGroup>
-        </TreeGroup>
+        <div class="tree-section">
+          <div class="tree-label">
+            <ChevronDown size={12} />
+            已连接
+            <span>{connections().length}</span>
+          </div>
+          <For each={connections()}>
+            {(conn) => (
+              <div class="tree-group" data-open={openConnections()[conn.id] ? "true" : "false"}>
+                <button
+                  class="tree-row db-row"
+                  onClick={() => toggleConnection(conn)}
+                  aria-expanded={openConnections()[conn.id] ? "true" : "false"}
+                >
+                  <ChevronRight size={13} class="chev" classList={{ open: openConnections()[conn.id] }} />
+                  <Database size={15} />
+                  <span class="tree-name">{conn.name}</span>
+                  <span class="row-end">
+                    <span class="tag mono">{conn.db_type}</span>
+                  </span>
+                </button>
+                <Show when={openConnections()[conn.id]}>
+                  <div class="tree-children">
+                    <Show
+                      when={!connectionData()[conn.id]?.loading}
+                      fallback={<div class="tree-row leaf muted" style={{ "padding-left": "20px" }}>加载中…</div>}
+                    >
+                      <Show
+                        when={(connectionData()[conn.id]?.databases.length ?? 0) > 0}
+                        fallback={<div class="tree-row leaf muted" style={{ "padding-left": "20px" }}>连接失败</div>}
+                      >
+                        <For each={[currentDatabase(conn)]}>
+                          {(database) => (
+                            <>
+                              <div class="tree-row leaf" style={{ "padding-left": "20px" }}>
+                                <span class="chev-space" />
+                                <Database size={13} />
+                                <span class="tree-name">{database}</span>
+                              </div>
+                              <div class="tree-row leaf" style={{ "padding-left": "34px" }}>
+                                <span class="chev-space" />
+                                <Folder size={13} />
+                                <span class="tree-name">{currentSchema(conn)}</span>
+                              </div>
+                              <div class="tree-row leaf" style={{ "padding-left": "48px" }}>
+                                <span class="chev-space" />
+                                <Folder size={13} />
+                                <span class="tree-name">表</span>
+                                <span class="tree-count">{connectionTables(conn, database, currentSchema(conn)).length}</span>
+                              </div>
+                              <For each={connectionTables(conn, database, currentSchema(conn))}>
+                                {(table) => {
+                                  const key = `${conn.id}|${database}|${currentSchema(conn)}|${table}`
+                                  return (
+                                    <button
+                                      class="tree-row leaf"
+                                      classList={{ active: activeKey() === key }}
+                                      style={{ "padding-left": "62px" }}
+                                      onClick={() => {
+                                        setActiveKey(key)
+                                        props.onOpenTable(conn, database, currentSchema(conn), table)
+                                      }}
+                                    >
+                                      <span class="chev-space" />
+                                      <Table2 size={12} />
+                                      <span class="tree-name">{table}</span>
+                                    </button>
+                                  )
+                                }}
+                              </For>
+                            </>
+                          )}
+                        </For>
+                      </Show>
+                    </Show>
+                  </div>
+                </Show>
+              </div>
+            )}
+          </For>
+          <Show when={props.backendStatus === "online" && connections().length === 0}>
+            <div class="tree-row leaf muted">暂无保存的连接</div>
+          </Show>
+        </div>
       </div>
 
       <div class="side-backend" classList={{ online: props.backendStatus === "online" }}>
         <span class="dot" />
         {props.backendStatus === "online"
-          ? `DBX 后端 · ${props.connectionCount} 个连接`
+          ? `DBX 后端 · ${connections().length} 个连接`
           : props.backendStatus === "checking"
             ? "连接 DBX 后端…"
             : "静态预览 · 后端未启动"}
@@ -348,75 +490,75 @@ function Birth(props: { value: string }) {
   )
 }
 
-function DataTable(props: {
-  rows: Person[]
-  selectedId: number
-  onSelect: (id: number) => void
-  minRows?: number
-}) {
+interface DataTableProps {
+  columns: Array<{ name: string; type: string; primary?: boolean }>
+  rows: (string | number | boolean | null)[][]
+  selectedKey: string | null
+  onSelect: (key: string) => void
+  emptyMessage?: string
+}
+
+function DataTable(props: DataTableProps) {
   return (
     <div class="grid" role="table">
       <div class="grid-head" role="row">
         <div class="th num">
-          <span class="th-name">
-            <KeyRound size={9} class="key" />id<span class="sort">↑</span>
-          </span>
-          <span class="th-type">int</span>
+          <span class="th-name">#</span>
         </div>
-        <div class="th">
-          <span class="th-name">name</span>
-          <span class="th-type">varchar(32)</span>
-        </div>
-        <div class="th">
-          <span class="th-name">style_name</span>
-          <span class="th-type">varchar(32)</span>
-        </div>
-        <div class="th">
-          <span class="th-name">faction</span>
-          <span class="th-type">varchar(16)</span>
-        </div>
-        <div class="th">
-          <span class="th-name">role</span>
-          <span class="th-type">varchar(32)</span>
-        </div>
-        <div class="th">
-          <span class="th-name">birth_death</span>
-          <span class="th-type">varchar(32)</span>
-        </div>
-        <div class="th">
-          <span class="th-name">bio</span>
-          <span class="th-type">text</span>
-        </div>
+        <For each={props.columns}>
+          {(column) => (
+            <div class="th">
+              <span class="th-name">
+                <Show when={column.primary}>
+                  <KeyRound size={9} class="key" />
+                </Show>
+                {column.name}
+              </span>
+              <span class="th-type">{column.type || "text"}</span>
+            </div>
+          )}
+        </For>
       </div>
-      <For each={props.rows}>
-        {(row) => (
-          <div class="grid-row" classList={{ selected: props.selectedId === row.id }} onClick={() => props.onSelect(row.id)}>
-            <div class="td num">{row.id}</div>
-            <div class="td name">{row.name}</div>
-            <div class="td">{row.style === "—" ? <span class="nullable">—</span> : row.style}</div>
-            <div class="td">{row.factionLabel}</div>
-            <div class="td">{row.role}</div>
-            <div class="td birth">
-              <Birth value={row.birth} />
-            </div>
-            <div class="td bio" title={row.bio}>
-              {row.bio}
-            </div>
+      <Show
+        when={props.rows.length > 0}
+        fallback={
+          <div class="grid-empty">
+            <Show when={props.emptyMessage} fallback={<div class="tree-row leaf muted">暂无数据</div>}>
+              {props.emptyMessage}
+            </Show>
           </div>
-        )}
-      </For>
+        }
+      >
+        <For each={props.rows}>
+          {(row, rowIndex) => {
+            const key = `${rowIndex()}`
+            return (
+              <div class="grid-row" classList={{ selected: props.selectedKey === key }} onClick={() => props.onSelect(key)}>
+                <div class="td num">{rowIndex() + 1}</div>
+                <For each={row}>
+                  {(cell) => (
+                    <div class="td" classList={{ nullable: cell === null }} title={cell === null ? "NULL" : String(cell)}>
+                      {cell === null ? "NULL" : cell}
+                    </div>
+                  )}
+                </For>
+              </div>
+            )
+          }}
+        </For>
+      </Show>
     </div>
   )
 }
 
-function GridFoot(props: { selected: boolean }) {
+function GridFoot(props: { rowCount: number; selected: boolean; elapsedMs: number }) {
   return (
     <div class="grid-foot">
-      <span>38 行</span>
+      <span>{props.rowCount} 行</span>
       <span class="foot-sep" />
       <span>{props.selected ? "已选 1 行" : "未选择"}</span>
       <span class="foot-sep" />
-      <span>6 ms</span>
+      <span>{props.elapsedMs} ms</span>
       <div class="grid-foot-right">
         <span>第 1 / 1 页</span>
         <button class="page-btn" aria-label="上一页" disabled>
@@ -426,7 +568,7 @@ function GridFoot(props: { selected: boolean }) {
           <ChevronRight size={11} />
         </button>
         <span class="page-size">
-          1000 行/页
+          500 行/页
           <ChevronDown size={9} />
         </span>
       </div>
@@ -438,28 +580,36 @@ function ChevronLeftIcon() {
   return <ChevronRight size={11} style={{ transform: "rotate(180deg)" }} />
 }
 
-function TableView(props: {
-  selectedId: number
-  onSelect: (id: number) => void
+interface TableViewProps {
+  loading: boolean
+  connectionName: string
+  database: string
+  schema: string
+  tableName: string
+  columns: Array<{ name: string; type: string; primary?: boolean }>
+  rows: (string | number | boolean | null)[][]
+  rowCount: number
+  elapsedMs: number
+  selectedKey: string | null
+  error: string | null
+  onSelect: (key: string) => void
   onRefresh: () => void
   onExport: () => void
-}) {
+}
+
+function TableView(props: TableViewProps) {
   return (
     <section class="view table-view">
       <div class="table-toolbar">
         <div class="table-heading">
           <Table2 size={15} class="table-ico" />
-          <span class="table-name">sanguo_characters</span>
-          <span class="table-path">public · test_geometry</span>
-          <span class="table-count">38 行</span>
+          <span class="table-name">{props.tableName || "选择一张表"}</span>
+          <Show when={props.tableName}>
+            <span class="table-path">{props.schema} · {props.database}</span>
+            <span class="table-count">{props.rowCount} 行</span>
+          </Show>
         </div>
         <div class="table-actions">
-          <button class="icon-btn" aria-label="筛选" title="筛选">
-            <Filter size={16} />
-          </button>
-          <button class="icon-btn" aria-label="排序" title="排序">
-            <ArrowUpDown size={16} />
-          </button>
           <span class="toolbar-sep" />
           <button class="icon-btn" aria-label="刷新" title="刷新" onClick={props.onRefresh}>
             <RefreshCw size={16} />
@@ -472,8 +622,24 @@ function TableView(props: {
           </button>
         </div>
       </div>
-      <DataTable rows={people} selectedId={props.selectedId} onSelect={props.onSelect} />
-      <GridFoot selected={props.selectedId > 0} />
+      <Show
+        when={!props.error}
+        fallback={<div class="grid-error">{props.error}</div>}
+      >
+        <Show
+          when={!props.loading}
+          fallback={<div class="grid-loading">加载表中…</div>}
+        >
+          <DataTable
+            columns={props.columns}
+            rows={props.rows}
+            selectedKey={props.selectedKey}
+            onSelect={props.onSelect}
+            emptyMessage={props.tableName ? "表里还没有数据" : "在左侧选择一张表"}
+          />
+        </Show>
+      </Show>
+      <GridFoot rowCount={props.rowCount} selected={!!props.selectedKey} elapsedMs={props.elapsedMs} />
     </section>
   )
 }
@@ -488,9 +654,22 @@ function CodeLine(props: { n: number; active?: boolean; children: JSX.Element })
 }
 
 function QueryView(props: {
-  selectedId: number
-  onSelect: (id: number) => void
+  selectedKey: string | null
+  onSelect: (key: string) => void
   onToast: (message: string) => void
+  connectionName: string
+  database: string
+  schema: string
+  columns: Array<{ name: string; type: string; primary?: boolean }>
+  rows: (string | number | boolean | null)[][]
+  rowCount: number
+  elapsedMs: number
+  loading: boolean
+  running: boolean
+  error: string | null
+  sql: string
+  onSqlChange: (sql: string) => void
+  onRun: () => void
 }) {
   return (
     <section class="view query-view">
@@ -498,17 +677,17 @@ function QueryView(props: {
         <div class="editor-toolbar">
           <button class="ctx-btn">
             <Database size={13} />
-            PostgreSQL_vh1q
+            {props.connectionName}
             <ChevronDown size={10} />
           </button>
           <span class="ctx-sep">/</span>
           <button class="ctx-btn">
-            test_geometry
+            {props.database}
             <ChevronDown size={10} />
           </button>
           <span class="ctx-sep">/</span>
           <button class="ctx-btn">
-            public
+            {props.schema}
             <ChevronDown size={10} />
           </button>
           <div class="editor-actions">
@@ -519,73 +698,42 @@ function QueryView(props: {
               <Info size={15} />
             </button>
             <span class="toolbar-sep" />
-            <button class="run-btn" onClick={() => props.onToast("查询已执行 · 38 行 · 6 ms")}>
+            <button class="run-btn" onClick={props.onRun} disabled={props.running}>
               <Play size={12} fill="currentColor" />
-              运行
+              {props.running ? "运行中…" : "运行"}
               <span class="run-kbd">⌘↵</span>
-              <span class="run-split">
-                <ChevronDown size={10} />
-              </span>
             </button>
           </div>
         </div>
 
-        <div class="code-wrap">
-          <CodeLine n={1}>
-            <span class="tok-com">-- 三国人物 · 全量预览</span>
-          </CodeLine>
-          <CodeLine n={2}>
-            <span class="tok-com">-- 先核对 AI 写入的数据</span>
-          </CodeLine>
-          <CodeLine n={3}>
-            <span class="tok-kw">SELECT</span>
-          </CodeLine>
-          <CodeLine n={4}>  id,</CodeLine>
-          <CodeLine n={5}>  name,</CodeLine>
-          <CodeLine n={6}>  style_name,</CodeLine>
-          <CodeLine n={7}>  faction,</CodeLine>
-          <CodeLine n={8}>  role,</CodeLine>
-          <CodeLine n={9}>  birth_death,</CodeLine>
-          <CodeLine n={10}>  bio</CodeLine>
-          <CodeLine n={11}>
-            <span class="tok-kw">FROM</span> <span class="tok-fn">public</span>.<span class="tok-fn">sanguo_characters</span>
-          </CodeLine>
-          <CodeLine n={12} active>
-            <span class="tok-kw">WHERE</span> faction <span class="tok-kw">IN</span> (<span class="tok-str">'蜀'</span>, <span class="tok-str">'魏'</span>, <span class="tok-str">'吴'</span>,{" "}
-            <span class="tok-str">'群雄'</span>)<span class="caret" />
-          </CodeLine>
-          <CodeLine n={13}>
-            <span class="tok-kw">ORDER BY</span> id
-          </CodeLine>
-          <CodeLine n={14}>
-            <span class="tok-kw">LIMIT</span> <span class="tok-num">1000</span>;
-          </CodeLine>
-          <CodeLine n={15}> </CodeLine>
-          <CodeLine n={16}>
-            <span class="tok-com">-- 结果可按势力、身份继续筛选</span>
-          </CodeLine>
-        </div>
+        <textarea
+          class="sql-editor mono"
+          spellcheck={false}
+          value={props.sql}
+          onInput={(event) => props.onSqlChange(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              event.preventDefault()
+              props.onRun()
+            }
+          }}
+          aria-label="SQL 编辑器"
+        />
       </div>
 
       <div class="result-pane">
         <div class="result-toolbar">
           <div class="result-tabs">
             <button class="result-tab active">
-              结果<span class="count-pill">38</span>
+              结果<span class="count-pill">{props.rowCount}</span>
             </button>
-            <button class="result-tab">
-              消息<span class="count-pill">1</span>
-            </button>
+            <Show when={props.error}>
+              <button class="result-tab error-tab">消息</button>
+            </Show>
           </div>
           <span class="toolbar-sep" />
-          <button class="icon-btn" aria-label="筛选" title="筛选">
-            <Filter size={16} />
-          </button>
-          <button class="icon-btn" aria-label="排序" title="排序">
-            <ArrowUpDown size={16} />
-          </button>
           <div class="result-actions">
-            <button class="icon-btn" aria-label="刷新" title="刷新">
+            <button class="icon-btn" aria-label="刷新" title="刷新" onClick={props.onRun}>
               <RefreshCw size={16} />
             </button>
             <button class="icon-btn" aria-label="导出" title="导出">
@@ -596,9 +744,17 @@ function QueryView(props: {
             </button>
           </div>
         </div>
-        <DataTable rows={people.slice(0, 12)} selectedId={props.selectedId} onSelect={props.onSelect} />
-        <GridFoot selected={props.selectedId > 0} />
-      </div>
+        <Show when={!props.error} fallback={<div class="grid-error">{props.error}</div>}>
+          <DataTable
+            columns={props.columns}
+            rows={props.rows}
+            selectedKey={props.selectedKey}
+            onSelect={props.onSelect}
+            emptyMessage="运行查询查看结果"
+          />
+        </Show>
+        <GridFoot rowCount={props.rowCount} selected={!!props.selectedKey} elapsedMs={props.elapsedMs} />
+     </div>
     </section>
   )
 }
@@ -1013,7 +1169,31 @@ export default function App() {
   const [activePanel, setActivePanel] = createSignal<Panel>("ai")
   const [settingsOpen, setSettingsOpen] = createSignal(false)
   const [backendStatus, setBackendStatus] = createSignal<"checking" | "online" | "offline">("checking")
-  const [connectionCount, setConnectionCount] = createSignal(0)
+  const [connections, setConnections] = createSignal<DbxConnection[]>([])
+  const [activeTarget, setActiveTarget] = createSignal<{
+    connection: DbxConnection
+    database: string
+    schema: string
+    table: string
+  } | null>(null)
+  const [browse, setBrowse] = createSignal<{
+    loading: boolean
+    columns: Array<{ name: string; type: string; primary?: boolean }>
+    rows: (string | number | boolean | null)[][]
+    rowCount: number
+    elapsedMs: number
+    error: string | null
+  }>({ loading: false, columns: [], rows: [], rowCount: 0, elapsedMs: 0, error: null })
+  const [selectedKey, setSelectedKey] = createSignal<string | null>(null)
+  const [querySql, setQuerySql] = createSignal("SELECT * FROM people LIMIT 100;")
+  const [queryState, setQueryState] = createSignal<{
+    running: boolean
+    columns: Array<{ name: string; type: string; primary?: boolean }>
+    rows: (string | number | boolean | null)[][]
+    rowCount: number
+    elapsedMs: number
+    error: string | null
+  }>({ running: false, columns: [], rows: [], rowCount: 0, elapsedMs: 0, error: null })
   const [sidebarWidth, setSidebarWidth] = createSignal(window.innerWidth < 1320 ? 246 : 264)
   const [rightWidth, setRightWidth] = createSignal(window.innerWidth < 1320 ? 320 : window.innerWidth < 1500 ? 340 : 360)
   const [tabs, setTabs] = createSignal<TabItem[]>(initialTabs)
@@ -1075,6 +1255,75 @@ export default function App() {
     setRightCollapsed(false)
   }
 
+  async function refreshBackend() {
+    setBackendStatus("checking")
+    try {
+      const list = await getConnections()
+      setConnections(list)
+      setBackendStatus("online")
+    } catch {
+      setConnections([])
+      setBackendStatus("offline")
+    }
+  }
+
+  async function openTable(connection: DbxConnection, database: string, schema: string, table: string) {
+    setActiveTarget({ connection, database, schema, table })
+    setActiveTab("table")
+    setBrowse((state) => ({ ...state, loading: true, error: null }))
+    try {
+      const { result, columns } = await browseTable(connection.id, database, schema, table)
+      setBrowse({
+        loading: false,
+        columns: columns.map((column) => ({
+          name: column.name,
+          type: column.data_type,
+          primary: column.is_primary_key,
+        })),
+        rows: result.rows,
+        rowCount: result.rows.length,
+        elapsedMs: result.execution_time_ms,
+        error: null,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setBrowse({ loading: false, columns: [], rows: [], rowCount: 0, elapsedMs: 0, error: message })
+    }
+  }
+
+  async function refreshTable() {
+    const target = activeTarget()
+    if (!target) {
+      showToast("先在左侧选择一张表")
+      return
+    }
+    await openTable(target.connection, target.database, target.schema, target.table)
+    showToast("结果已刷新")
+  }
+
+  async function runQuery() {
+    const active = activeTarget()
+    if (!active) {
+      showToast("先在左侧打开一个连接")
+      return
+    }
+    setQueryState((state) => ({ ...state, running: true, error: null }))
+    try {
+      const result = await executeQuery(active.connection.id, active.database, querySql(), active.schema)
+      setQueryState({
+        running: false,
+        columns: [],
+        rows: result.rows,
+        rowCount: result.rows.length,
+        elapsedMs: result.execution_time_ms,
+        error: null,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setQueryState((state) => ({ ...state, running: false, error: message }))
+    }
+  }
+
   function startResize(kind: "sidebar" | "right", event: PointerEvent) {
     event.preventDefault()
     if (kind === "right" && rightCollapsed()) return
@@ -1104,13 +1353,7 @@ export default function App() {
   }
 
   onMount(() => {
-    getConnections()
-      .then((connections) => {
-        setConnectionCount(connections.length)
-        setBackendStatus("online")
-      })
-      .catch(() => setBackendStatus("offline"))
-
+    void refreshBackend()
     window.api?.onMaximized(setMaximized)
     const onKey = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey
@@ -1157,13 +1400,13 @@ export default function App() {
           width={sidebarWidth()}
           maximized={maximized()}
           backendStatus={backendStatus()}
-          connectionCount={connectionCount()}
           onToggle={() => setSidebarCollapsed(true)}
           onNewConnection={() => showToast("新建连接")}
           onToast={showToast}
           onMinimize={() => windowAction("minimize")}
           onMaximize={() => windowAction("maximize")}
           onClose={() => windowAction("close")}
+          onOpenTable={openTable}
         />
         <div class="panel-gap gap-left" classList={{ hidden: sidebarCollapsed() }} role="separator" aria-label="调整左栏宽度" onPointerDown={(event) => startResize("sidebar", event)} />
       </Show>
@@ -1201,14 +1444,41 @@ export default function App() {
                     when={activeTab() === "query"}
                     fallback={
                       <TableView
-                        selectedId={selectedId()}
-                        onSelect={setSelectedId}
-                        onRefresh={() => showToast("结果已刷新")}
+                        loading={browse().loading}
+                        connectionName={activeTarget()?.connection.name ?? ""}
+                        database={activeTarget()?.database ?? ""}
+                        schema={activeTarget()?.schema ?? ""}
+                        tableName={activeTarget()?.table ?? ""}
+                        columns={browse().columns}
+                        rows={browse().rows}
+                        rowCount={browse().rowCount}
+                        elapsedMs={browse().elapsedMs}
+                        selectedKey={selectedKey()}
+                        error={browse().error}
+                        onSelect={setSelectedKey}
+                        onRefresh={() => void refreshTable()}
                         onExport={() => showToast("导出结果 · CSV")}
                       />
                     }
                   >
-                    <QueryView selectedId={selectedId()} onSelect={setSelectedId} onToast={showToast} />
+                    <QueryView
+                      selectedKey={selectedKey()}
+                      onSelect={setSelectedKey}
+                      onToast={showToast}
+                      connectionName={activeTarget()?.connection.name ?? "未连接"}
+                      database={activeTarget()?.database ?? "main"}
+                      schema={activeTarget()?.schema ?? "main"}
+                      columns={queryState().columns}
+                      rows={queryState().rows}
+                      rowCount={queryState().rowCount}
+                      elapsedMs={queryState().elapsedMs}
+                      loading={false}
+                      running={queryState().running}
+                      error={queryState().error}
+                      sql={querySql()}
+                      onSqlChange={setQuerySql}
+                      onRun={() => void runQuery()}
+                    />
                   </Show>
                 </main>
                 <Show when={!rightCollapsed()}>

@@ -3509,3 +3509,56 @@ html[data-theme="dark"] {
 .side-backend.online .dot {
   background: var(--status);
 }
+
+/* sql editor + live grid states */
+.sql-editor {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  border: 0;
+  outline: 0;
+  padding: 10px 14px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.7;
+  tab-size: 2;
+}
+.grid-loading,
+.grid-empty,
+.grid-error {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 24px;
+  text-align: center;
+}
+.grid-error {
+  color: var(--red);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  align-items: start;
+  padding-top: 18px;
+  justify-items: start;
+}
+.result-tab.error-tab {
+  color: var(--red);
+}
+.mono {
+  font-family: var(--font-mono);
+}
+.tag.mono {
+  font-family: var(--font-mono);
+}
+.tree-group[data-open="true"] > .tree-row .chev {
+  transform: rotate(90deg);
+}
+.tree-children {
+  position: relative;
+}
