@@ -31,8 +31,12 @@ module.exports = {
     target: ["AppImage", "deb"],
     category: "Development",
     icon: "build/icon.png",
-    // scoped package name (@dbx-app/...) is illegal as an executable name
+    // scoped package name is illegal as an executable name
     executableName: "omdbx",
+  },
+  // default deb name comes from the package name; keep it consistent with the other installers
+  deb: {
+    artifactName: "OMDBX-${version}-${arch}.${ext}",
   },
   nsis: {
     oneClick: false,

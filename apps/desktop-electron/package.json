@@ -1,5 +1,5 @@
 {
-  "name": "@dbx-app/desktop-electron",
+  "name": "omdbx-desktop",
   "version": "0.1.3",
   "private": true,
   "type": "module",
@@ -28,7 +28,7 @@
     "vite": "^8.3.5",
     "vite-plugin-solid": "^2.11.15"
   },
-  "description": "DBX desktop frontend (Electron + SolidJS) on the dbx-web sidecar",
+  "description": "OMDBX desktop app (Electron + SolidJS) on the DBX dbx-web sidecar",
   "author": {
     "name": "Cenuon",
     "email": "Cenuon@users.noreply.github.com"
