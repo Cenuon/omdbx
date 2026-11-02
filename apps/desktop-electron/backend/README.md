@@ -44,7 +44,7 @@ The app loads `http://127.0.0.1:<port>/`, so the UI and `/api/*` are same-origin
 
 ## Fetch a release build instead of compiling
 
-DBX publishes `browser-static` bundles per OS/arch on GitHub Releases. Extract the `dbx-web` binary and put it at `backend/dbx-web`. Do not commit the binary; `.gitignore` excludes it.
+DBX publishes `browser-static` bundles per OS/arch on GitHub Releases. The current release bundles are Linux builds; on macOS/Windows build `dbx-web` from the fork (or use a Linux container) and put the binary at `backend/dbx-web`. Do not commit the binary; `.gitignore` excludes it.
 
 ## Upgrading DBX
 
