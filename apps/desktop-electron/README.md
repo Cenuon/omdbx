@@ -72,4 +72,6 @@ pnpm start
 1. **保留 DBX 现有 Tauri + Vue**，把这套 Inter / 暖灰 token / 字号 / 行高 / 阴影 / 右侧扩展栏设计移植回去。成本最低，不重写业务。
 2. **继续 Electron + SolidJS**，按 OpenCode 的技术栈重做 DBX 桌面端。视觉和桌面体验最接近，但等于前端重写，且和现有 Tauri 打包链分叉。
 
-当前是静态数据，没有接真实数据库；先把视觉和桌面壳方向定下来。
+## 数据来源
+
+左侧连接列表、schema 树、表数据浏览、SQL 查询都已接上游 `dbx-web` 的真实接口（见 `src/renderer/src/dbx/client.ts`），不再是静态数据。右侧 AI 助手 / SQL 库 / 历史面板和设置页仍是界面原型。
