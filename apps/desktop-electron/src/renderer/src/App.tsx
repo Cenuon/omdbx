@@ -44,13 +44,12 @@ import { historyItems, initialTabs, sqlFiles, type TabItem } from "./data"
 import {
   browseTable,
   connectDb,
+  executeQuery,
   getConnections,
   getDatabases,
   getSchemas,
   getTables,
-  type DbxColumn,
   type DbxConnection,
-  type DbxQueryResult,
 } from "./dbx/client"
 
 type Theme = "light" | "dark"
@@ -709,6 +708,7 @@ function QueryView(props: {
         <textarea
           class="sql-editor mono"
           spellcheck={false}
+          placeholder="输入 SQL，⌘↵ 运行"
           value={props.sql}
           onInput={(event) => props.onSqlChange(event.currentTarget.value)}
           onKeyDown={(event) => {
@@ -1185,7 +1185,7 @@ export default function App() {
     error: string | null
   }>({ loading: false, columns: [], rows: [], rowCount: 0, elapsedMs: 0, error: null })
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null)
-  const [querySql, setQuerySql] = createSignal("SELECT * FROM people LIMIT 100;")
+  const [querySql, setQuerySql] = createSignal("")
   const [queryState, setQueryState] = createSignal<{
     running: boolean
     columns: Array<{ name: string; type: string; primary?: boolean }>
@@ -1227,7 +1227,7 @@ export default function App() {
   function openQuery() {
     const existing = tabs().find((tab) => tab.kind === "query")
     if (!existing) {
-      setTabs([...tabs(), { id: "query", title: "三国人物预览", kind: "query", unsaved: true }])
+      setTabs([...tabs(), { id: "query", title: "查询", kind: "query", unsaved: true }])
     }
     setActiveTab("query")
     showToast("已打开查询编辑器")
@@ -1270,6 +1270,7 @@ export default function App() {
   async function openTable(connection: DbxConnection, database: string, schema: string, table: string) {
     setActiveTarget({ connection, database, schema, table })
     setActiveTab("table")
+    setQuerySql(`SELECT * FROM "${table.replace(/"/g, '""')}" LIMIT 100;`)
     setBrowse((state) => ({ ...state, loading: true, error: null }))
     try {
       const { result, columns } = await browseTable(connection.id, database, schema, table)
@@ -1312,7 +1313,10 @@ export default function App() {
       const result = await executeQuery(active.connection.id, active.database, querySql(), active.schema)
       setQueryState({
         running: false,
-        columns: [],
+        columns: result.columns.map((name, index) => ({
+          name,
+          type: result.column_types?.[index] ?? "",
+        })),
         rows: result.rows,
         rowCount: result.rows.length,
         elapsedMs: result.execution_time_ms,
