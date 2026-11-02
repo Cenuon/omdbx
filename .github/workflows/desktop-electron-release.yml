@@ -24,7 +24,7 @@ jobs:
             builder: --mac --arm64
           - platform: mac
             arch: x64
-            runner: macos-13
+            runner: macos-14
             builder: --mac --x64
           - platform: win
             arch: x64

@@ -31,6 +31,8 @@ module.exports = {
     target: ["AppImage", "deb"],
     category: "Development",
     icon: "build/icon.png",
+    // scoped package name (@dbx-app/...) is illegal as an executable name
+    executableName: "dbx",
   },
   nsis: {
     oneClick: false,
