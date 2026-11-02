@@ -29,7 +29,10 @@
     "vite-plugin-solid": "^2.11.15"
   },
   "description": "DBX desktop frontend (Electron + SolidJS) on the dbx-web sidecar",
-  "author": "Cenuon",
+  "author": {
+    "name": "Cenuon",
+    "email": "Cenuon@users.noreply.github.com"
+  },
   "homepage": "https://github.com/Cenuon/dbx",
   "repository": {
     "type": "git",
