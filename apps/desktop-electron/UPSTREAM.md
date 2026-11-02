@@ -6,7 +6,7 @@ This app is additive. The DBX backend stays in the fork's `crates/` and `src-tau
 
 ```bash
 git remote -v
-# origin   https://github.com/Cenuon/dbx.git
+# origin   https://github.com/Cenuon/omdbx.git
 # upstream https://github.com/t8y2/dbx.git
 ```
 

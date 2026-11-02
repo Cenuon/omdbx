@@ -1,7 +1,7 @@
 # Architecture
 
 ```text
-Cenuon/dbx (fork)
+Cenuon/omdbx (fork)
 ├── upstream: t8y2/dbx
 ├── crates/dbx-web              # DBX backend, unchanged
 ├── crates/dbx-*                # DBX database engine, unchanged

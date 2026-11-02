@@ -48,7 +48,7 @@ module.exports = {
     {
       provider: "github",
       owner: "Cenuon",
-      repo: "dbx",
+      repo: "omdbx",
       releaseType: "draft",
     },
   ],

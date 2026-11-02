@@ -2,7 +2,7 @@
 
 一个真正跑在 Electron 窗口里的 DBX 工作台原型。不是网页稿，窗口控制、标题栏拖拽、主题、面板收起都是桌面应用行为。
 
-**这个目录位于 `Cenuon/dbx` fork 内**：DBX 后端使用上游的 `crates/dbx-web`，Electron 只做前端壳。架构和升级方式见：
+**这个目录位于 `Cenuon/omdbx` fork 内**：DBX 后端使用上游的 `crates/dbx-web`，Electron 只做前端壳。架构和升级方式见：
 
 - `ARCHITECTURE.md`
 - `UPSTREAM.md`

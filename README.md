@@ -6,7 +6,7 @@
 
 连接 → schema 树 → 表数据浏览 → SQL 查询，全部由真实 DBX 后端驱动。
 
-[下载安装包](https://github.com/Cenuon/dbx/releases) · [架构说明](apps/desktop-electron/ARCHITECTURE.md) · [发布流程](apps/desktop-electron/RELEASING.md) · [上游项目](https://github.com/t8y2/dbx)
+[下载安装包](https://github.com/Cenuon/omdbx/releases) · [架构说明](apps/desktop-electron/ARCHITECTURE.md) · [发布流程](apps/desktop-electron/RELEASING.md) · [上游项目](https://github.com/t8y2/dbx)
 
 </div>
 
@@ -39,7 +39,7 @@ SQL 编辑器与查询结果：
 
 ## 下载安装
 
-到 [Releases](https://github.com/Cenuon/dbx/releases) 下载对应平台：
+到 [Releases](https://github.com/Cenuon/omdbx/releases) 下载对应平台：
 
 | 平台 | 产物 |
 | --- | --- |

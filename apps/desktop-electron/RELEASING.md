@@ -4,7 +4,7 @@ The fork publishes the same kind of download assets as upstream: macOS DMG/ZIP, 
 
 ## Automatic GitHub Actions
 
-1. Enable Actions in `Cenuon/dbx` (forks start with Actions disabled).
+1. Enable Actions in `Cenuon/omdbx` (forks start with Actions disabled).
 2. Create and push a desktop tag:
 
 ```bash

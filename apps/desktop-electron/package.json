@@ -33,10 +33,10 @@
     "name": "Cenuon",
     "email": "Cenuon@users.noreply.github.com"
   },
-  "homepage": "https://github.com/Cenuon/dbx",
+  "homepage": "https://github.com/Cenuon/omdbx",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Cenuon/dbx.git",
+    "url": "https://github.com/Cenuon/omdbx.git",
     "directory": "apps/desktop-electron"
   }
 }
