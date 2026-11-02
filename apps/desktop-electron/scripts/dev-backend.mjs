@@ -29,7 +29,15 @@ if (binary && existsSync(binary)) {
   args = []
 } else if (existsSync(cargoToml)) {
   command = "cargo"
-  args = ["run", "--release", "-p", "dbx-web"]
+  args = [
+    "run",
+    "--release",
+    "-p",
+    "dbx-web",
+    "--no-default-features",
+    "--features",
+    "duckdb-sidecar,dynamodb,mq-admin,dbx-core/sqlite-bundled",
+  ]
 } else {
   console.error(`
 dbx-web binary not found.

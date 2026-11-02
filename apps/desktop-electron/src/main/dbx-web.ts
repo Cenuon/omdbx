@@ -37,7 +37,8 @@ async function waitForServer(url: string, timeoutMs = 20_000): Promise<void> {
 
 function resolveBinary(): string {
   if (process.env.DBX_WEB_BIN) return process.env.DBX_WEB_BIN
-  return join(process.resourcesPath, "dbx-web")
+  const name = process.platform === "win32" ? "dbx-web.exe" : "dbx-web"
+  return join(process.resourcesPath, name)
 }
 
 export async function startDbxWeb(): Promise<DbxWebProcess> {
@@ -59,7 +60,7 @@ export async function startDbxWeb(): Promise<DbxWebProcess> {
       DBX_BIND_ADDR: "127.0.0.1",
       DBX_DISABLE_PASSWORD: "1",
       DBX_DATA_DIR: dataDir,
-      DBX_STATIC_DIR: join(__dirname, "../renderer"),
+      DBX_STATIC_DIR: app.isPackaged ? join(process.resourcesPath, "renderer") : join(__dirname, "../renderer"),
     },
     stdio: ["ignore", "pipe", "pipe"],
   })

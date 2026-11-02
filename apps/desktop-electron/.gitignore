@@ -7,3 +7,4 @@ backend/dbx-web
 backend/*.tar.gz
 backend/*.zip
 .dbx-web-data
+release
