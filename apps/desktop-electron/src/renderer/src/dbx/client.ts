@@ -178,13 +178,13 @@ export async function browseTable(
   database: string,
   schema: string,
   table: string,
-): Promise<{ result: DbxQueryResult; columns: DbxColumn[]; sql: string }> {
+): Promise<{ result: DbxQueryResult; columns: DbxColumn[]; sql: string; quote: string }> {
   const remote = await getIdentifierQuote(connection.id, database).catch(() => null)
-  const quoted = quoteIdentifier(connection.db_type, remote, table)
-  const sql = `SELECT * FROM ${quoted} LIMIT 500`
+  const quote = remote ?? (connection.db_type === "mysql" ? "`" : '"')
+  const sql = `SELECT * FROM ${quoteIdentifier(connection.db_type, remote, table)} LIMIT 500`
   const [result, columns] = await Promise.all([
     executeQuery(connection.id, database, sql, schema),
     getColumns(connection.id, database, schema, table).catch(() => [] as DbxColumn[]),
   ])
-  return { result, columns, sql }
+  return { result, columns, sql, quote }
 }

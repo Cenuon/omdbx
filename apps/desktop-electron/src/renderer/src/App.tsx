@@ -54,6 +54,7 @@ import {
   type DbxConnectionInput,
 } from "./dbx/client"
 import NewConnectionDialog from "./NewConnectionDialog"
+import ContextMenu, { type MenuItem } from "./ContextMenu"
 
 type Theme = "light" | "dark"
 type Panel = "ai" | "sql" | "history"
@@ -577,13 +578,61 @@ function Birth(props: { value: string }) {
   )
 }
 
+export interface ColumnViewState {  hidden: string[]
+  widths: Record<string, number>
+  /** how many leading columns stay pinned while scrolling sideways */
+  frozen: number
+  showTypes: boolean
+  showComments: boolean
+  /** font scale for the grid, 1 = default */
+  scale: number
+}
+
+export const DEFAULT_COLUMN_VIEW: ColumnViewState = {
+  hidden: [],
+  widths: {},
+  frozen: 0,
+  showTypes: true,
+  showComments: false,
+  scale: 1,
+}
+
+function quoteName(quote: string, name: string): string {
+  return `${quote}${name.split(quote).join(quote + quote)}${quote}`
+}
+
+function sqlLiteral(value: string | number | boolean | null): string {
+  if (value === null || value === undefined) return "NULL"
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  return `'${String(value).replace(/'/g, "''")}'`
+}
+
+function textOf(value: string | number | boolean | null): string {
+  return value === null || value === undefined ? "" : String(value)
+}
+
+/** Newline-separated values; CSV mode quotes fields that need it. */
+function delimited(values: Array<string | number | boolean | null>, separator: string, quoteFields: boolean): string {
+  return values
+    .map((value) => {
+      const text = textOf(value)
+      if (!quoteFields) return text
+      return text.includes(separator) || text.includes('"') || text.includes("\n")
+        ? `"${text.replace(/"/g, '""')}"`
+        : text
+    })
+    .join("\n")
+}
+
 interface DataTableProps {
-  columns: Array<{ name: string; type: string; primary?: boolean }>
+  columns: Array<{ name: string; type: string; primary?: boolean; comment?: string | null }>
   rows: (string | number | boolean | null)[][]
   selectedKey: string | null
   onSelect: (key: string) => void
   emptyMessage?: string
   rowStyle: RowStyle
+  view?: ColumnViewState
+  onColumnMenu?: (index: number, x: number, y: number) => void
   /** absent disables cell editing */
   onEdit?: (rowIndex: number, columnIndex: number, value: string) => void
   /** staged edits keyed by `${rowIndex}|${columnIndex}` */
@@ -591,8 +640,7 @@ interface DataTableProps {
 }
 
 /** Row tint for the configured striping mode. */
-function stripeOf(index: number, mode: RowStyle): string {
-  if (mode === "zebra") return index % 2 === 1 ? "b" : ""
+function stripeOf(index: number, mode: RowStyle): string {  if (mode === "zebra") return index % 2 === 1 ? "b" : ""
   if (mode === "triple") {
     const position = (index + 1) % 6
     if (position === 3) return "a"
@@ -604,6 +652,36 @@ function stripeOf(index: number, mode: RowStyle): string {
 function DataTable(props: DataTableProps) {
   const [editing, setEditing] = createSignal<{ row: number; col: number } | null>(null)
   const [draft, setDraft] = createSignal("")
+
+  const view = () => props.view ?? DEFAULT_COLUMN_VIEW
+  const visible = createMemo(() =>
+    props.columns
+      .map((column, index) => ({ ...column, index }))
+      .filter((column) => !view().hidden.includes(column.name)),
+  )
+  const frozen = () => Math.min(view().frozen, visible().length)
+  const widthOf = (name: string) => view().widths[name]
+
+  /** sticky left offsets for the frozen columns, including the row-number gutter */
+  const frozenOffsets = createMemo(() => {
+    const offsets: number[] = []
+    let left = 48
+    for (let i = 0; i < frozen(); i += 1) {
+      offsets.push(left)
+      left += widthOf(visible()[i].name) ?? 150
+    }
+    return offsets
+  })
+
+  const template = () => {
+    const parts = ["48px"]
+    for (const column of visible()) {
+      const width = widthOf(column.name)
+      parts.push(width ? `${width}px` : "minmax(150px, 1fr)")
+    }
+    return parts.join(" ")
+  }
+  const minWidth = () => 48 + visible().reduce((sum, column) => sum + (widthOf(column.name) ?? 150), 0)
 
   const isEditing = (row: number, col: number) => editing()?.row === row && editing()?.col === col
 
@@ -625,24 +703,36 @@ function DataTable(props: DataTableProps) {
       class="grid"
       classList={{ "rows-zebra": props.rowStyle === "zebra", "rows-triple": props.rowStyle === "triple" }}
       role="table"
-      style={`--grid-cols: 48px repeat(${Math.max(props.columns.length, 1)}, minmax(150px, 1fr)); --grid-min: ${
-        48 + Math.max(props.columns.length, 1) * 150
-      }px`}
+      style={`--grid-cols: ${template()}; --grid-min: ${minWidth()}px; --grid-scale: ${view().scale}`}
     >
       <div class="grid-head" role="row">
-        <div class="th num">
+        <div class="th num" classList={{ frozen: frozen() > 0 }} style={frozen() > 0 ? "left: 0px" : undefined}>
           <span class="th-name">#</span>
         </div>
-        <For each={props.columns}>
-          {(column) => (
-            <div class="th">
+        <For each={visible()}>
+          {(column, position) => (
+            <div
+              class="th"
+              classList={{ frozen: position() < frozen() }}
+              style={position() < frozen() ? `left: ${frozenOffsets()[position()]}px` : undefined}
+              onContextMenu={(event) => {
+                if (!props.onColumnMenu) return
+                event.preventDefault()
+                props.onColumnMenu(column.index, event.clientX, event.clientY)
+              }}
+            >
               <span class="th-name">
                 <Show when={column.primary}>
                   <KeyRound size={9} class="key" />
                 </Show>
                 <span class="th-text">{column.name}</span>
               </span>
-              <span class="th-type">{column.type || "text"}</span>
+              <Show when={view().showTypes}>
+                <span class="th-type">{column.type || "text"}</span>
+              </Show>
+              <Show when={view().showComments && column.comment}>
+                <span class="th-comment">{column.comment}</span>
+              </Show>
             </div>
           )}
         </For>
@@ -667,24 +757,30 @@ function DataTable(props: DataTableProps) {
                 data-stripe={stripeOf(rowIndex(), props.rowStyle)}
                 onClick={() => props.onSelect(key)}
               >
-                <div class="td num">{rowIndex() + 1}</div>
-                <For each={row}>
-                  {(cell, cellIndex) => {
+                <div class="td num" classList={{ frozen: frozen() > 0 }} style={frozen() > 0 ? "left: 0px" : undefined}>
+                  {rowIndex() + 1}
+                </div>
+                <For each={visible()}>
+                  {(column, position) => {
+                    const cellIndex = () => column.index
+                    const cell = () => row[cellIndex()]
                     const staged = () => props.pending?.[`${rowIndex()}|${cellIndex()}`]
                     return (
                       <div
                         class="td"
                         classList={{
-                          nullable: cell === null,
+                          nullable: cell() === null,
                           editing: isEditing(rowIndex(), cellIndex()),
                           dirty: staged() !== undefined,
+                          frozen: position() < frozen(),
                         }}
-                        title={props.onEdit ? "双击编辑" : cell === null ? "NULL" : String(cell)}
-                        onDblClick={() => beginEdit(rowIndex(), cellIndex(), staged() ?? cell)}
+                        style={position() < frozen() ? `left: ${frozenOffsets()[position()]}px` : undefined}
+                        title={props.onEdit ? "双击编辑" : cell() === null ? "NULL" : String(cell())}
+                        onDblClick={() => beginEdit(rowIndex(), cellIndex(), staged() ?? cell())}
                       >
                         <Show
                           when={isEditing(rowIndex(), cellIndex())}
-                          fallback={staged() ?? (cell === null ? "NULL" : cell)}
+                          fallback={staged() ?? (cell() === null ? "NULL" : cell())}
                         >
                           <input
                             class="cell-editor"
@@ -762,6 +858,8 @@ interface TableViewProps {
   onExport: () => void
   rowStyle: RowStyle
   onEdit: (rowIndex: number, columnIndex: number, value: string) => void
+  view: ColumnViewState
+  onColumnMenu: (index: number, x: number, y: number) => void
   pending: Record<string, string>
   pendingCount: number
   onSaveEdits: () => void
@@ -819,6 +917,8 @@ function TableView(props: TableViewProps) {
             rowStyle={props.rowStyle}
             onEdit={props.onEdit}
             pending={props.pending}
+            view={props.view}
+            onColumnMenu={props.onColumnMenu}
           />
         </Show>
       </Show>
@@ -1383,14 +1483,19 @@ export default function App() {
   } | null>(null)
   const [browse, setBrowse] = createSignal<{
     loading: boolean
-    columns: Array<{ name: string; type: string; primary?: boolean }>
+    columns: Array<{ name: string; type: string; primary?: boolean; comment?: string | null }>
     rows: (string | number | boolean | null)[][]
     rowCount: number
     elapsedMs: number
     error: string | null
-  }>({ loading: false, columns: [], rows: [], rowCount: 0, elapsedMs: 0, error: null })
+    quote: string
+  }>({ loading: false, columns: [], rows: [], rowCount: 0, elapsedMs: 0, error: null, quote: '"' })
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null)
   const [pendingEdits, setPendingEdits] = createSignal<Record<string, string>>({})
+  const [columnViews, setColumnViews] = createSignal<Record<string, ColumnViewState>>({})
+  const [columnMenu, setColumnMenu] = createSignal<{ x: number; y: number; index: number } | null>(null)
+  const [columnDialog, setColumnDialog] = createSignal<{ kind: "hide" | "width" | "allWidth"; index: number } | null>(null)
+  const [dialogValue, setDialogValue] = createSignal("")
   const [querySql, setQuerySql] = createSignal("")
   const [queryState, setQueryState] = createSignal<{
     running: boolean
@@ -1499,14 +1604,16 @@ export default function App() {
     setPendingEdits({})
     setBrowse((state) => ({ ...state, loading: true, error: null }))
     try {
-      const { result, columns, sql } = await browseTable(connection, database, schema, table)
+      const { result, columns, sql, quote } = await browseTable(connection, database, schema, table)
       setQuerySql(`${sql};`)
       setBrowse({
         loading: false,
+        quote,
         columns: columns.map((column) => ({
           name: column.name,
           type: column.data_type,
           primary: column.is_primary_key,
+          comment: column.comment,
         })),
         rows: result.rows,
         rowCount: result.rows.length,
@@ -1597,6 +1704,228 @@ export default function App() {
     } catch (error) {
       showToast(`保存失败：${error instanceof Error ? error.message : String(error)}`)
     }
+  }
+
+  function tableKeyOf(): string {
+    const target = activeTarget()
+    return target ? `${target.connection.id}|${target.database}|${target.schema}|${target.table}` : ""
+  }
+
+  function columnView(): ColumnViewState {
+    return columnViews()[tableKeyOf()] ?? DEFAULT_COLUMN_VIEW
+  }
+
+  function updateColumnView(patch: Partial<ColumnViewState>) {
+    const key = tableKeyOf()
+    if (!key) return
+    setColumnViews((state) => ({ ...state, [key]: { ...(state[key] ?? DEFAULT_COLUMN_VIEW), ...patch } }))
+  }
+
+  function visibleColumns() {
+    return browse()
+      .columns.map((column, index) => ({ ...column, index }))
+      .filter((column) => !columnView().hidden.includes(column.name))
+  }
+
+  async function copyText(text: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+      showToast(`已复制${label}`)
+    } catch {
+      showToast("复制失败")
+    }
+  }
+
+  /** Width that fits the header plus the widest value in the column. */
+  function measuredWidth(index: number): number {
+    const column = browse().columns[index]
+    const canvas = document.createElement("canvas")
+    const context = canvas.getContext("2d")
+    const grid = document.querySelector(".grid")
+    if (!context) return 150
+    const style = grid ? getComputedStyle(grid) : null
+    context.font = style ? `${style.fontSize} ${style.fontFamily}` : "12px monospace"
+    let width = context.measureText(column?.name ?? "").width + 46
+    for (const row of browse().rows) {
+      width = Math.max(width, context.measureText(textOf(row[index])).width + 26)
+    }
+    return Math.min(600, Math.max(80, Math.ceil(width)))
+  }
+
+  function fitColumns(indexes: number[]) {
+    const widths = { ...columnView().widths }
+    for (const index of indexes) {
+      const column = browse().columns[index]
+      if (column) widths[column.name] = measuredWidth(index)
+    }
+    updateColumnView({ widths })
+  }
+
+  function freezeColumn(index: number) {
+    const visible = visibleColumns()
+    const position = visible.findIndex((column) => column.index === index)
+    if (position < 0) return
+    const head = document.querySelector(".grid-head")
+    const cells = head ? Array.from(head.querySelectorAll(".th")) : []
+    const widths = { ...columnView().widths }
+    for (let i = 0; i <= position; i += 1) {
+      const cell = cells[i + 1] as HTMLElement | undefined
+      if (cell) widths[visible[i].name] = Math.round(cell.getBoundingClientRect().width)
+    }
+    updateColumnView({ frozen: position + 1, widths })
+    showToast(`已冻结左侧 ${position + 1} 列`)
+  }
+
+  async function pasteColumn(index: number) {
+    try {
+      const text = await navigator.clipboard.readText()
+      if (!text) {
+        showToast("剪贴板是空的")
+        return
+      }
+      const lines = text.replace(/\r\n/g, "\n").split("\n")
+      const next = { ...pendingEdits() }
+      let applied = 0
+      for (let row = 0; row < browse().rows.length && row < lines.length; row += 1) {
+        if (lines[row] === "") continue
+        next[`${row}|${index}`] = lines[row]
+        applied += 1
+      }
+      setPendingEdits(next)
+      showToast(applied > 0 ? `已粘贴 ${applied} 个值，记得保存` : "没有可粘贴的行")
+    } catch {
+      showToast("读取剪贴板失败")
+    }
+  }
+
+  function columnMenuItems(index: number): MenuItem[] {
+    const columns = browse().columns
+    const column = columns[index]
+    const target = activeTarget()
+    if (!column || !target) return []
+    const quote = browse().quote
+    const rows = browse().rows
+    const values = rows.map((row) => row[index])
+    const table = quoteName(quote, target.table)
+    const name = quoteName(quote, column.name)
+    const keys = columns.filter((item) => item.primary)
+    const keyIndexes = keys.map((key) => columns.findIndex((item) => item.name === key.name))
+    const insertSql = rows
+      .map((row) => `INSERT INTO ${table} (${name}) VALUES (${sqlLiteral(row[index])});`)
+      .join("\n")
+    const updateSql = keys.length
+      ? rows
+          .map(
+            (row) =>
+              `UPDATE ${table} SET ${name} = ${sqlLiteral(row[index])} WHERE ${keys
+                .map((key, position) => `${quoteName(quote, key.name)} = ${sqlLiteral(row[keyIndexes[position]])}`)
+                .join(" AND ")};`,
+          )
+          .join("\n")
+      : ""
+    const withHeader = (separator: string, quoted: boolean) =>
+      [column.name, ...values.map((value) => (quoted && separator === "," ? delimited([value], ",", true) : textOf(value)))].join(
+        "\n",
+      )
+
+    return [
+      { label: "复制", onSelect: () => void copyText(delimited(values, "\t", false), "列数据") },
+      { label: "复制字段名称", onSelect: () => void copyText(column.name, "字段名称") },
+      {
+        label: "复制为",
+        submenu: [
+          { label: "Insert 语句", onSelect: () => void copyText(insertSql, "Insert 语句") },
+          { label: "Update 语句", disabled: !updateSql, onSelect: () => void copyText(updateSql, "Update 语句") },
+          { separator: true },
+          { label: "制表符分隔值（数据）", onSelect: () => void copyText(delimited(values, "\t", false), "数据") },
+          { label: "制表符分隔值（字段名称）", onSelect: () => void copyText(column.name, "字段名称") },
+          { label: "制表符分隔值（字段名称和数据）", onSelect: () => void copyText(withHeader("\t", false), "字段名称和数据") },
+          { separator: true },
+          { label: "逗号分隔值（数据）", onSelect: () => void copyText(delimited(values, ",", true), "数据") },
+          { label: "逗号分隔值（字段名称）", onSelect: () => void copyText(column.name, "字段名称") },
+          { label: "逗号分隔值（字段名称和数据）", onSelect: () => void copyText(withHeader(",", true), "字段名称和数据") },
+          { separator: true },
+          { label: "JSON", onSelect: () => void copyText(JSON.stringify(values, null, 2), "JSON") },
+        ],
+      },
+      { label: "粘贴", onSelect: () => void pasteColumn(index) },
+      { separator: true },
+      {
+        label: "显示或隐藏列…",
+        onSelect: () => {
+          setDialogValue("")
+          setColumnDialog({ kind: "hide", index })
+        },
+      },
+      {
+        label: "隐藏列",
+        onSelect: () => updateColumnView({ hidden: [...columnView().hidden, column.name] }),
+      },
+      { label: "冻结列", onSelect: () => freezeColumn(index) },
+      { separator: true },
+      {
+        label: "设置列宽…",
+        onSelect: () => {
+          setDialogValue(String(Math.round(columnView().widths[column.name] ?? 150)))
+          setColumnDialog({ kind: "width", index })
+        },
+      },
+      {
+        label: "设置所有列宽度…",
+        onSelect: () => {
+          setDialogValue("150")
+          setColumnDialog({ kind: "allWidth", index })
+        },
+      },
+      { label: "调整列宽以适应内容", onSelect: () => fitColumns([index]) },
+      {
+        label: "调整所有列的适合大小",
+        onSelect: () => fitColumns(browse().columns.map((_, position) => position)),
+      },
+      { separator: true },
+      {
+        label: "显示字段类型",
+        checked: columnView().showTypes,
+        onSelect: () => updateColumnView({ showTypes: !columnView().showTypes }),
+      },
+      {
+        label: "显示注释",
+        checked: columnView().showComments,
+        onSelect: () => updateColumnView({ showComments: !columnView().showComments }),
+      },
+      { separator: true },
+      {
+        label: "缩放",
+        submenu: [0.9, 1, 1.1, 1.25].map((scale) => ({
+          label: `${Math.round(scale * 100)}%`,
+          checked: columnView().scale === scale,
+          onSelect: () => updateColumnView({ scale }),
+        })),
+      },
+    ]
+  }
+
+  function applyColumnDialog() {
+    const dialog = columnDialog()
+    if (!dialog) return
+    if (dialog.kind === "width") {
+      const column = browse().columns[dialog.index]
+      const width = Number(dialogValue())
+      if (column && width > 0) updateColumnView({ widths: { ...columnView().widths, [column.name]: Math.round(width) } })
+    } else if (dialog.kind === "allWidth") {
+      const width = Number(dialogValue())
+      if (width > 0) {
+        const widths: Record<string, number> = {}
+        for (const column of browse().columns) widths[column.name] = Math.round(width)
+        updateColumnView({ widths })
+      }
+    }
+    setColumnDialog(null)
+  }
+
+  function toggleColumnVisibility(name: string) {
+    const hidden = columnView().hidden
+    updateColumnView({ hidden: hidden.includes(name) ? hidden.filter((item) => item !== name) : [...hidden, name] })
   }
 
   async function runQuery() {
@@ -1768,6 +2097,8 @@ export default function App() {
                         pendingCount={Object.keys(pendingEdits()).length}
                         onSaveEdits={() => void saveEdits()}
                         onCancelEdits={cancelEdits}
+                        view={columnView()}
+                        onColumnMenu={(index, x, y) => setColumnMenu({ index, x, y })}
                       />
                     }
                   >
@@ -1826,6 +2157,79 @@ export default function App() {
           onCreated={handleConnectionCreated}
           onToast={showToast}
         />
+      </Show>
+      <Show when={columnMenu()}>
+        {(menu) => (
+          <ContextMenu
+            x={menu().x}
+            y={menu().y}
+            items={columnMenuItems(menu().index)}
+            onClose={() => setColumnMenu(null)}
+          />
+        )}
+      </Show>
+      <Show when={columnDialog()}>
+        {(dialog) => (
+          <div class="palette-backdrop" onClick={(event) => event.target === event.currentTarget && setColumnDialog(null)}>
+            <div class="dialog dialog-narrow" role="dialog" aria-modal="true">
+              <header class="dialog-head">
+                <h2>
+                  {dialog().kind === "hide"
+                    ? "显示或隐藏列"
+                    : dialog().kind === "width"
+                      ? `设置列宽 · ${browse().columns[dialog().index]?.name ?? ""}`
+                      : "设置所有列宽度"}
+                </h2>
+                <button class="icon-btn" aria-label="关闭" onClick={() => setColumnDialog(null)}>
+                  <X size={15} />
+                </button>
+              </header>
+              <div class="dialog-body">
+                <Show
+                  when={dialog().kind === "hide"}
+                  fallback={
+                    <label class="field">
+                      <span>宽度（像素）</span>
+                      <input
+                        type="number"
+                        value={dialogValue()}
+                        autofocus
+                        onInput={(event) => setDialogValue(event.currentTarget.value)}
+                        onKeyDown={(event) => event.key === "Enter" && applyColumnDialog()}
+                      />
+                    </label>
+                  }
+                >
+                  <div class="column-list">
+                    <For each={browse().columns}>
+                      {(column) => (
+                        <label class="column-toggle">
+                          <input
+                            type="checkbox"
+                            checked={!columnView().hidden.includes(column.name)}
+                            onChange={() => toggleColumnVisibility(column.name)}
+                          />
+                          <span class="column-toggle-name">{column.name}</span>
+                          <small>{column.type}</small>
+                        </label>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+              <footer class="dialog-foot">
+                <div class="dialog-foot-right">
+                  <button class="ghost-btn" onClick={() => setColumnDialog(null)}>
+                    取消
+                  </button>
+                  <button class="primary-btn" onClick={applyColumnDialog}>
+                    确定
+                  </button>
+                </div>
+              </footer>
+            </div>
+          </div>
+        )}
       </Show>
       <Toast message={toast()} />
     </div>
