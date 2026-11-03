@@ -3946,3 +3946,13 @@ html[data-theme="dark"] {
 .th-type {
   font-size: 10px;
 }
+
+/* row separators need to read at a glance, not only on close inspection */
+.grid-row {
+  border-bottom-color: var(--line-strong);
+}
+
+/* row separators need to read at a glance, not only on close inspection */
+.grid-row {
+  border-bottom-color: color-mix(in srgb, var(--ink) 20%, transparent);
+}
