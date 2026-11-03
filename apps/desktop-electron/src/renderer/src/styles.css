@@ -4483,3 +4483,33 @@ html[data-theme="dark"] {
   border-radius: 11px;
   box-shadow: 0 8px 20px -12px rgba(20, 20, 16, 0.16), 0 1px 3px rgba(20, 20, 16, 0.05);
 }
+
+/* dialogs: bigger radius, layered diffuse shadow, roomier chrome */
+.dialog {
+  border-radius: 16px;
+  border: 1px solid var(--line-strong);
+  box-shadow:
+    0 1px 1px rgba(20, 20, 16, 0.04),
+    0 10px 28px -10px rgba(20, 20, 16, 0.16),
+    0 34px 70px -30px rgba(20, 20, 16, 0.26);
+}
+.dialog-head {
+  height: 52px;
+  flex: 0 0 52px;
+  padding: 0 12px 0 18px;
+}
+.dialog-head h2 {
+  font-size: 13.5px;
+  font-weight: 550;
+}
+.dialog-body {
+  gap: 14px;
+  padding: 18px;
+}
+.dialog-foot {
+  padding: 14px 18px;
+}
+.palette-backdrop {
+  background: rgba(8, 10, 8, 0.3);
+  backdrop-filter: blur(5px);
+}
