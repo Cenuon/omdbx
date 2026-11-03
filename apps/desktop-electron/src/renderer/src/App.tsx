@@ -49,6 +49,7 @@ import {
   getDatabases,
   getSchemas,
   getTables,
+  prepareDataGridSave,
   type DbxConnection,
   type DbxConnectionInput,
 } from "./dbx/client"
@@ -583,6 +584,8 @@ interface DataTableProps {
   onSelect: (key: string) => void
   emptyMessage?: string
   rowStyle: RowStyle
+  /** absent disables cell editing */
+  onEdit?: (rowIndex: number, columnIndex: number, value: string) => void
 }
 
 /** Row tint for the configured striping mode. */
@@ -597,6 +600,24 @@ function stripeOf(index: number, mode: RowStyle): string {
 }
 
 function DataTable(props: DataTableProps) {
+  const [editing, setEditing] = createSignal<{ row: number; col: number } | null>(null)
+  const [draft, setDraft] = createSignal("")
+
+  const isEditing = (row: number, col: number) => editing()?.row === row && editing()?.col === col
+
+  function beginEdit(row: number, col: number, cell: string | number | boolean | null) {
+    if (!props.onEdit) return
+    setDraft(cell === null ? "" : String(cell))
+    setEditing({ row, col })
+  }
+
+  function commitEdit() {
+    const target = editing()
+    if (!target) return
+    setEditing(null)
+    props.onEdit?.(target.row, target.col, draft())
+  }
+
   return (
     <div
       class="grid"
@@ -646,9 +667,31 @@ function DataTable(props: DataTableProps) {
               >
                 <div class="td num">{rowIndex() + 1}</div>
                 <For each={row}>
-                  {(cell) => (
-                    <div class="td" classList={{ nullable: cell === null }} title={cell === null ? "NULL" : String(cell)}>
-                      {cell === null ? "NULL" : cell}
+                  {(cell, cellIndex) => (
+                    <div
+                      class="td"
+                      classList={{ nullable: cell === null, editing: isEditing(rowIndex(), cellIndex()) }}
+                      title={props.onEdit ? "双击编辑" : cell === null ? "NULL" : String(cell)}
+                      onDblClick={() => beginEdit(rowIndex(), cellIndex(), cell)}
+                    >
+                      <Show when={isEditing(rowIndex(), cellIndex())} fallback={cell === null ? "NULL" : cell}>
+                        <input
+                          class="cell-editor"
+                          value={draft()}
+                          autofocus
+                          onInput={(event) => setDraft(event.currentTarget.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault()
+                              commitEdit()
+                            } else if (event.key === "Escape") {
+                              event.preventDefault()
+                              setEditing(null)
+                            }
+                          }}
+                          onBlur={commitEdit}
+                        />
+                      </Show>
                     </div>
                   )}
                 </For>
@@ -706,6 +749,7 @@ interface TableViewProps {
   onRefresh: () => void
   onExport: () => void
   rowStyle: RowStyle
+  onEdit: (rowIndex: number, columnIndex: number, value: string) => void
 }
 
 function TableView(props: TableViewProps) {
@@ -748,6 +792,7 @@ function TableView(props: TableViewProps) {
             onSelect={props.onSelect}
             emptyMessage={props.tableName ? "表里还没有数据" : "在左侧选择一张表"}
             rowStyle={props.rowStyle}
+            onEdit={props.onEdit}
           />
         </Show>
       </Show>
@@ -1456,6 +1501,52 @@ export default function App() {
     showToast("结果已刷新")
   }
 
+  /** Empty input clears the cell to NULL; numbers stay numbers when the original was one. */
+  function parseCellValue(original: string | number | boolean | null, text: string): string | number | null {
+    if (text === "") return null
+    if (typeof original === "number" && !Number.isNaN(Number(text))) return Number(text)
+    return text
+  }
+
+  async function editCell(rowIndex: number, columnIndex: number, value: string) {
+    const target = activeTarget()
+    const column = browse().columns[columnIndex]
+    if (!target || !column) return
+    const original = browse().rows[rowIndex]?.[columnIndex] ?? null
+    const next = parseCellValue(original, value)
+    if (next === original) return
+    try {
+      const preparation = await prepareDataGridSave({
+        databaseType: target.connection.db_type,
+        tableMeta: {
+          database: target.database,
+          schema: target.schema,
+          tableName: target.table,
+          primaryKeys: browse()
+            .columns.filter((item) => item.primary)
+            .map((item) => item.name),
+        },
+        columns: browse().columns.map((item) => item.name),
+        rows: browse().rows,
+        dirtyRows: [[rowIndex, [[columnIndex, next]]]],
+      })
+      if (preparation.validationError) throw new Error(preparation.validationError)
+      if (preparation.keylessGuards?.length) throw new Error("这张表没有主键，暂不支持在表格里直接编辑")
+      for (const statement of preparation.statements) {
+        await executeQuery(
+          target.connection.id,
+          target.database,
+          statement,
+          preparation.executionSchema ?? target.schema,
+        )
+      }
+      showToast(`已更新 ${column.name}`)
+      await openTable(target.connection, target.database, target.schema, target.table)
+    } catch (error) {
+      showToast(`更新失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   async function runQuery() {
     const active = activeTarget()
     if (!active) {
@@ -1620,6 +1711,7 @@ export default function App() {
                         onRefresh={() => void refreshTable()}
                         onExport={() => showToast("导出结果 · CSV")}
                         rowStyle={rowStyle()}
+                        onEdit={(rowIndex, columnIndex, value) => void editCell(rowIndex, columnIndex, value)}
                       />
                     }
                   >

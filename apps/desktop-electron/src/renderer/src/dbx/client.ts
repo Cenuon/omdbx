@@ -132,6 +132,37 @@ export function getIdentifierQuote(connectionId: string, database?: string): Pro
   })
 }
 
+export interface DataGridSaveOptions {
+  databaseType?: string
+  identifierQuote?: string
+  tableMeta: {
+    database?: string
+    schema?: string
+    tableName: string
+    primaryKeys: string[]
+  }
+  columns: string[]
+  rows: (string | number | boolean | null)[][]
+  /** [row index, [[column index, new value]]] */
+  dirtyRows: Array<[number, Array<[number, string | number | null]>]>
+}
+
+export interface DataGridSavePreparation {
+  validationError?: string
+  statements: string[]
+  rollbackStatements: string[]
+  executionSchema?: string
+  keylessGuards?: Array<{ sql: string; maxMatchedRows: number; minMatchedRows: number; message: string }>
+}
+
+/** The backend builds the UPDATE statements so quoting and escaping stay dialect-correct. */
+export function prepareDataGridSave(options: DataGridSaveOptions): Promise<DataGridSavePreparation> {
+  return request<DataGridSavePreparation>("/api/query/prepare-data-grid-save", {
+    method: "POST",
+    body: JSON.stringify({ options }),
+  })
+}
+
 /**
  * The backend only reports the quote for a few drivers, so fall back to the
  * dialect convention: backticks for MySQL, brackets for SQL Server, quotes elsewhere.

@@ -4073,3 +4073,20 @@ html[data-grid-font="ui"] {
 .td.birth {
   font-family: var(--grid-font);
 }
+
+/* ---------- in-place cell editing ---------- */
+.td.editing {
+  padding: 0;
+  overflow: visible;
+}
+.cell-editor {
+  width: 100%;
+  height: 100%;
+  padding: 0 9px;
+  border: 0;
+  outline: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
