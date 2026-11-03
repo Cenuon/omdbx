@@ -4415,3 +4415,13 @@ html[data-theme="dark"] {
 .td.cell-selected.dirty {
   background: var(--cell-dirty-hover);
 }
+
+/* fainter striping: barely-there row rhythm */
+:root {
+  --row-stripe-a: rgba(0, 0, 0, 0.012);
+  --row-stripe-b: rgba(56, 116, 226, 0.032);
+}
+html[data-theme="dark"] {
+  --row-stripe-a: rgba(255, 255, 255, 0.014);
+  --row-stripe-b: rgba(96, 156, 255, 0.045);
+}
