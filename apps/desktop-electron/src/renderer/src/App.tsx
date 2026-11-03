@@ -255,6 +255,7 @@ function TreeLeaf(props: {
 
 interface SidebarProps {
   width: number
+  contentWidth: number
   maximized: boolean
   backendStatus: "checking" | "online" | "offline"
   onToggle: () => void
@@ -351,7 +352,14 @@ function Sidebar(props: SidebarProps) {
   }
 
   return (
-    <aside class="sidebar" style={{ width: `${props.width}px`, "flex-basis": `${props.width}px` }}>
+    <aside
+      class="sidebar"
+      style={{
+        width: `${props.width}px`,
+        "flex-basis": `${props.width}px`,
+        "--panel-w": `${props.contentWidth}px`,
+      }}
+    >
       <div class="side-top">
         <WindowControls
           maximized={props.maximized}
@@ -1004,12 +1012,20 @@ function HistoryView(props: { onToast: (message: string) => void }) {
 function RightPanel(props: {
   active: Panel
   width: number
+  contentWidth: number
   onPanel: (panel: Panel) => void
   onToast: (message: string) => void
   onInsert: () => void
 }) {
   return (
-    <aside class="right-panel" style={{ width: `${props.width}px`, "flex-basis": `${props.width}px` }}>
+    <aside
+      class="right-panel"
+      style={{
+        width: `${props.width}px`,
+        "flex-basis": `${props.width}px`,
+        "--panel-w": `${props.contentWidth}px`,
+      }}
+    >
       <div class="right-body">
         <div class="panel-tabs">
           <button class="panel-tab" classList={{ active: props.active === "ai" }} onClick={() => props.onPanel("ai")}>
@@ -1391,7 +1407,8 @@ export default function App() {
     <div class="app" classList={{ "sidebar-collapsed": sidebarCollapsed(), "right-collapsed": rightCollapsed() }}>
       <Show when={!settingsOpen()}>
         <Sidebar
-          width={sidebarWidth()}
+          width={sidebarCollapsed() ? 0 : sidebarWidth()}
+          contentWidth={sidebarWidth()}
           maximized={maximized()}
           backendStatus={backendStatus()}
           onToggle={() => setSidebarCollapsed(true)}
@@ -1475,19 +1492,18 @@ export default function App() {
                     />
                   </Show>
                 </main>
-                <Show when={!rightCollapsed()}>
-                  <div class="panel-gap gap-right" role="separator" aria-label="调整右栏宽度" onPointerDown={(event) => startResize("right", event)} />
-                  <RightPanel
-                    active={activePanel()}
-                    width={rightWidth()}
-                    onPanel={handlePanel}
-                    onToast={showToast}
-                    onInsert={() => {
-                      openQuery()
-                      showToast("SQL 已插入编辑器")
-                    }}
-                  />
-                </Show>
+                <div class="panel-gap gap-right" classList={{ hidden: rightCollapsed() }} role="separator" aria-label="调整右栏宽度" onPointerDown={(event) => startResize("right", event)} />
+                <RightPanel
+                  active={activePanel()}
+                  width={rightCollapsed() ? 0 : rightWidth()}
+                  contentWidth={rightWidth()}
+                  onPanel={handlePanel}
+                  onToast={showToast}
+                  onInsert={() => {
+                    openQuery()
+                    showToast("SQL 已插入编辑器")
+                  }}
+                />
               </>
             }
           >
