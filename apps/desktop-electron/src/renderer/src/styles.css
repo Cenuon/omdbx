@@ -4477,3 +4477,9 @@ html[data-theme="dark"] {
 .menu-swatch:hover {
   transform: scale(1.15);
 }
+
+/* dialogs share the menu's popover treatment */
+.dialog {
+  border-radius: 11px;
+  box-shadow: 0 8px 20px -12px rgba(20, 20, 16, 0.16), 0 1px 3px rgba(20, 20, 16, 0.05);
+}
