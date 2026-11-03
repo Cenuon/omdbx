@@ -4560,3 +4560,30 @@ html[data-theme="dark"] {
 .dialog {
   box-shadow: 0 14px 30px -12px rgba(20, 20, 16, 0.45);
 }
+
+/* manage-connections list */
+.manage-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 6px;
+  border-radius: 5px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.manage-row:hover {
+  background: var(--surface-3);
+}
+.manage-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manage-row small {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}

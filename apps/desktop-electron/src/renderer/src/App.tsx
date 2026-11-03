@@ -353,6 +353,8 @@ function Sidebar(props: SidebarProps) {
   const [connectionMenu, setConnectionMenu] = createSignal<{ x: number; y: number; conn: DbxConnection } | null>(null)
   const [folderDialog, setFolderDialog] = createSignal<{ kind: "new" | "rename"; id?: string } | null>(null)
   const [folderName, setFolderName] = createSignal("")
+  const [sidebarMenu, setSidebarMenu] = createSignal<{ x: number; y: number } | null>(null)
+  const [manageOpen, setManageOpen] = createSignal(false)
 
   let layoutReady = false
 
@@ -631,6 +633,37 @@ function Sidebar(props: SidebarProps) {
     }
   }
 
+  async function closeAllConnections() {
+    const list = connections()
+    if (list.length === 0) return
+    await Promise.all(list.map((connection) => disconnectDb(connection.id).catch(() => undefined)))
+    props.onToast(`已关闭 ${list.length} 个连接`)
+  }
+
+  function sidebarMenuItems(): MenuItem[] {
+    return [
+      { label: "新建连接", icon: <Plus size={15} />, onSelect: () => props.onNewConnection() },
+      {
+        label: "关闭所有连接",
+        icon: <Power size={15} />,
+        disabled: connections().length === 0,
+        onSelect: () => void closeAllConnections(),
+      },
+      { label: "管理连接…", icon: <Settings2 size={15} />, onSelect: () => setManageOpen(true) },
+      { separator: true },
+      {
+        label: "新建组",
+        icon: <FolderPlus size={15} />,
+        onSelect: () => {
+          setFolderName("")
+          setFolderDialog({ kind: "new" })
+        },
+      },
+      { separator: true },
+      { label: "刷新", icon: <RefreshCw size={15} />, hint: "⌘R", onSelect: () => void refreshConnections() },
+    ]
+  }
+
   function connectionMenuItems(connection: DbxConnection): MenuItem[] {
     const folder = folderOf(connection.id)
     const starred = stars().includes(connection.id)
@@ -784,7 +817,14 @@ function Sidebar(props: SidebarProps) {
         </button>
       </nav>
 
-      <div class="tree-scroll">
+      <div
+        class="tree-scroll"
+        onContextMenu={(event) => {
+          if ((event.target as HTMLElement).closest(".tree-row")) return
+          event.preventDefault()
+          setSidebarMenu({ x: event.clientX, y: event.clientY })
+        }}
+      >
         <div class="tree-section">
           <div class="tree-label">
             <ChevronDown size={12} />
@@ -823,6 +863,61 @@ function Sidebar(props: SidebarProps) {
         </div>
       </div>
 
+      <Show when={sidebarMenu()}>
+        {(menu) => (
+          <ContextMenu
+            x={menu().x}
+            y={menu().y}
+            items={sidebarMenuItems()}
+            onClose={() => setSidebarMenu(null)}
+          />
+        )}
+      </Show>
+      <Show when={manageOpen()}>
+        <div class="palette-backdrop" onClick={(event) => event.target === event.currentTarget && setManageOpen(false)}>
+          <div class="dialog dialog-narrow" role="dialog" aria-modal="true">
+            <header class="dialog-head">
+              <h2>管理连接</h2>
+              <button class="icon-btn" aria-label="关闭" onClick={() => setManageOpen(false)}>
+                <X size={15} />
+              </button>
+            </header>
+            <div class="dialog-body">
+              <div class="column-list">
+                <For each={connections()}>
+                  {(connection) => (
+                    <div class="manage-row">
+                      <Show when={connectionIcon(connection.db_type)} fallback={<Database size={14} />}>
+                        <img class="conn-icon" src={connectionIcon(connection.db_type)} alt="" />
+                      </Show>
+                      <span class="manage-name">{connection.name}</span>
+                      <small>{connection.db_type}</small>
+                      <button
+                        class="icon-btn"
+                        aria-label={`删除 ${connection.name}`}
+                        title="删除连接"
+                        onClick={() => void removeConnection(connection)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  )}
+                </For>
+                <Show when={connections().length === 0}>
+                  <div class="tree-hint">还没有连接</div>
+                </Show>
+              </div>
+            </div>
+            <footer class="dialog-foot">
+              <div class="dialog-foot-right">
+                <button class="primary-btn" onClick={() => setManageOpen(false)}>
+                  完成
+                </button>
+              </div>
+            </footer>
+          </div>
+        </div>
+      </Show>
       <Show when={connectionMenu()}>
         {(menu) => (
           <ContextMenu
