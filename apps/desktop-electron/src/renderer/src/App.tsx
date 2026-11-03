@@ -594,6 +594,12 @@ function Sidebar(props: SidebarProps) {
     return CONNECTION_ICONS.get(dbType)
   }
 
+  /** A connection is live once it is expanded and its databases came back. */
+  function connectionOnline(conn: DbxConnection): boolean {
+    const data = connectionData()[conn.id]
+    return !!openConnections()[conn.id] && !!data && !data.loading && data.databases.length > 0
+  }
+
   function folderOf(connectionId: string): SidebarFolder | undefined {
     return folders().find((folder) => folder.connections.includes(connectionId))
   }
@@ -812,6 +818,7 @@ function Sidebar(props: SidebarProps) {
       >
         <button
           class="tree-row db-row"
+          classList={{ "conn-online": connectionOnline(conn) }}
           style={{ "padding-left": depth > 0 ? `${depth * 14}px` : undefined }}
           onClick={() => toggleConnection(conn)}
           aria-expanded={openConnections()[conn.id] ? "true" : "false"}

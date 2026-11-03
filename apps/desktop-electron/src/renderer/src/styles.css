@@ -4610,3 +4610,30 @@ html[data-theme="dark"] .dialog {
 .sidebar .tree-locate:hover svg {
   color: var(--ink);
 }
+
+/* connection icon: grey until the connection is live, then full colour */
+.conn-icon {
+  filter: grayscale(1);
+  opacity: 0.55;
+  transition: filter 140ms ease, opacity 140ms ease;
+}
+.sidebar .tree-row.db-row.conn-online .conn-icon {
+  filter: none;
+  opacity: 1;
+}
+.sidebar .tree-row.db-row.conn-online > svg:not(.chev) {
+  color: var(--accent);
+}
+
+/* every tree level reads the same: one size, one colour */
+.sidebar .tree-row,
+.sidebar .tree-row.folder-row,
+.sidebar .tree-row .tree-name,
+.sidebar .tree-row.folder-row .tree-name,
+.sidebar .tree-row.db-row .tree-name,
+.sidebar .tree-row.tree-db,
+.sidebar .tree-row.tree-table {
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--ink);
+}
