@@ -658,6 +658,8 @@ interface DataTableProps {
   onEdit?: (rowIndex: number, columnIndex: number, value: string) => void
   /** staged edits keyed by `${rowIndex}|${columnIndex}` */
   pending?: Record<string, string | number | null>
+  /** cell highlighted by the last context-menu hit */
+  selectedCell?: { row: number; col: number } | null
 }
 
 /** Row tint for the configured striping mode. */
@@ -808,6 +810,8 @@ function DataTable(props: DataTableProps) {
                           editing: isEditing(rowIndex(), cellIndex()),
                           dirty: hasStaged(),
                           frozen: position() < frozen(),
+                          "cell-selected":
+                            props.selectedCell?.row === rowIndex() && props.selectedCell?.col === cellIndex(),
                         }}
                         style={position() < frozen() ? `left: ${frozenOffsets()[position()]}px` : undefined}
                         title={props.onEdit ? "双击编辑" : display()}
@@ -902,6 +906,7 @@ interface TableViewProps {
   onCellMenu: (rowIndex: number, columnIndex: number, x: number, y: number) => void
   rows: Array<{ index: number; values: Array<string | number | boolean | null>; isNew: boolean }>
   pending: Record<string, string | number | null>
+  selectedCell: { row: number; col: number } | null
   pendingCount: number
   onSaveEdits: () => void
   onCancelEdits: () => void
@@ -965,6 +970,7 @@ function TableView(props: TableViewProps) {
             newRowFlags={props.rows.map((row) => row.isNew)}
             onRowMenu={props.onRowMenu}
             onCellMenu={props.onCellMenu}
+            selectedCell={props.selectedCell}
           />
         </Show>
       </Show>
@@ -1537,6 +1543,7 @@ export default function App() {
     quote: string
   }>({ loading: false, columns: [], rows: [], rowCount: 0, elapsedMs: 0, error: null, quote: '"' })
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null)
+  const [selectedCell, setSelectedCell] = createSignal<{ row: number; col: number } | null>(null)
   const [pendingEdits, setPendingEdits] = createSignal<Record<string, string | number | null>>({})
   const [columnViews, setColumnViews] = createSignal<Record<string, ColumnViewState>>({})
   const [columnMenu, setColumnMenu] = createSignal<{ x: number; y: number; index: number } | null>(null)
@@ -1658,6 +1665,7 @@ export default function App() {
     setPendingEdits({})
     setNewRows([])
     setPendingDeletes([])
+    setSelectedCell(null)
     setBrowse((state) => ({ ...state, loading: true, error: null }))
     try {
       const { result, columns, sql, quote } = await browseTable(connection, database, schema, table)
@@ -2402,7 +2410,11 @@ export default function App() {
                         view={columnView()}
                         onColumnMenu={(index, x, y) => setColumnMenu({ index, x, y })}
                         onRowMenu={(index, x, y) => setRowMenu({ index, x, y })}
-                        onCellMenu={(row, column, x, y) => setCellMenu({ row, column, x, y })}
+                        onCellMenu={(row, column, x, y) => {
+                          setSelectedCell({ row, col: column })
+                          setCellMenu({ row, column, x, y })
+                        }}
+                        selectedCell={selectedCell()}
                         rows={rowModel()}
                       />
                     }

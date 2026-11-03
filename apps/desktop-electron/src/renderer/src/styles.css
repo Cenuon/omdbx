@@ -4406,3 +4406,12 @@ html[data-theme="dark"] {
 .menu-item.active:not(.disabled) .menu-icon {
   color: var(--ink);
 }
+
+/* the cell the context menu was opened on stays marked */
+.td.cell-selected {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  color: var(--ink);
+}
+.td.cell-selected.dirty {
+  background: var(--cell-dirty-hover);
+}
