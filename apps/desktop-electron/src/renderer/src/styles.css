@@ -4022,3 +4022,8 @@ html[data-theme="dark"] {
   font-weight: 550;
   box-shadow: var(--shadow-xs);
 }
+
+/* very light row separators: the striping carries the row rhythm now */
+.grid-row {
+  border-bottom-color: color-mix(in srgb, var(--ink) 6%, transparent);
+}
