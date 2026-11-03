@@ -4272,3 +4272,17 @@ html[data-theme="dark"] {
   font-family: var(--font-mono);
   font-size: 10px;
 }
+
+/* rows staged for insertion read as "not saved yet" */
+.grid-row.row-new {
+  background-image: linear-gradient(rgba(76, 175, 120, 0.12), rgba(76, 175, 120, 0.12));
+}
+.grid-row.row-new .td.num {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* explicit row height from the row context menu */
+.grid-row {
+  height: calc(var(--grid-row-h, var(--row)) * var(--grid-scale, 1));
+}
