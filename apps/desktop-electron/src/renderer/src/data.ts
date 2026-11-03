@@ -59,12 +59,6 @@ export interface TabItem {
   unsaved?: boolean
 }
 
-export const initialTabs: TabItem[] = [
-  { id: "table", title: "sanguo_characters", kind: "table", sub: "public" },
-  { id: "query", title: "三国人物预览", kind: "query", unsaved: true },
-  { id: "orders", title: "order_log", kind: "table", sub: "dbo" },
-]
-
 export const sqlFiles = [
   { name: "03_create_products.sql", tag: "oracle21c" },
   { name: "10_create_view.sql", tag: "oracle21c" },

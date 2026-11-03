@@ -40,7 +40,7 @@ import {
 } from "lucide-solid"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
 import SettingsView from "./SettingsView"
-import { historyItems, initialTabs, sqlFiles, type TabItem } from "./data"
+import { historyItems, sqlFiles, type TabItem } from "./data"
 import {
   browseTable,
   connectDb,
@@ -1218,8 +1218,8 @@ export default function App() {
   }>({ running: false, columns: [], rows: [], rowCount: 0, elapsedMs: 0, error: null })
   const [sidebarWidth, setSidebarWidth] = createSignal(window.innerWidth < 1320 ? 246 : 264)
   const [rightWidth, setRightWidth] = createSignal(window.innerWidth < 1320 ? 320 : window.innerWidth < 1500 ? 340 : 360)
-  const [tabs, setTabs] = createSignal<TabItem[]>(initialTabs)
-  const [activeTab, setActiveTab] = createSignal("table")
+  const [tabs, setTabs] = createSignal<TabItem[]>([])
+  const [activeTab, setActiveTab] = createSignal("")
   const [selectedId, setSelectedId] = createSignal(3)
   const [commandOpen, setCommandOpen] = createSignal(false)
   const [newConnectionOpen, setNewConnectionOpen] = createSignal(false)
@@ -1268,17 +1268,15 @@ export default function App() {
     const current = tabs()
     const index = current.findIndex((tab) => tab.id === id)
     const next = current.filter((tab) => tab.id !== id)
+    setTabs(next)
+    if (activeTab() !== id) return
     if (next.length === 0) {
-      const tab: TabItem = { id: "query", title: "三国人物预览", kind: "query", unsaved: true }
-      setTabs([tab])
-      setActiveTab(tab.id)
+      setActiveTab("")
+      setActiveTarget(null)
+      setBrowse({ loading: false, columns: [], rows: [], rowCount: 0, elapsedMs: 0, error: null })
       return
     }
-    setTabs(next)
-    if (activeTab() === id) {
-      const fallback = next[Math.max(0, index - 1)]
-      setActiveTab(fallback.id)
-    }
+    setActiveTab(next[Math.max(0, index - 1)].id)
   }
 
   function handlePanel(panel: Panel) {
@@ -1299,11 +1297,12 @@ export default function App() {
   }
 
   async function openTable(connection: DbxConnection, database: string, schema: string, table: string) {
+    const key = `${connection.id}|${database}|${schema}|${table}`
     setActiveTarget({ connection, database, schema, table })
-    setActiveTab("table")
     setTabs((list) =>
-      list.map((tab) => (tab.id === "table" ? { ...tab, title: table, sub: schema } : tab)),
+      list.some((tab) => tab.id === key) ? list : [...list, { id: key, title: table, kind: "table", sub: schema }],
     )
+    setActiveTab(key)
     setQuerySql(`SELECT * FROM "${table.replace(/"/g, '""')}" LIMIT 100;`)
     setBrowse((state) => ({ ...state, loading: true, error: null }))
     try {
@@ -1425,7 +1424,7 @@ export default function App() {
 
   function handleCommand(id: string) {
     if (id === "new-query") openQuery()
-    else if (id === "new-connection") showToast("新建连接")
+    else if (id === "new-connection") setNewConnectionOpen(true)
     else if (id === "format") showToast("SQL 已格式化")
     else if (id === "toggle-theme") toggleTheme()
     else if (id === "settings") setSettingsOpen(true)
