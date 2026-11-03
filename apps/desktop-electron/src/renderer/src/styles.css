@@ -3485,31 +3485,6 @@ html[data-theme="dark"] {
   opacity: 1;
 }
 
-/* backend bridge status */
-.side-backend {
-  flex: 0 0 30px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 13px;
-  border-top: 1px solid var(--line);
-  color: var(--faint);
-  font-size: 10px;
-  white-space: nowrap;
-}
-.side-backend .dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--faint);
-}
-.side-backend.online {
-  color: var(--muted);
-}
-.side-backend.online .dot {
-  background: var(--status);
-}
-
 /* sql editor + live grid states */
 .sql-editor {
   flex: 1;
