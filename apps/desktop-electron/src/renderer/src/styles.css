@@ -4664,3 +4664,27 @@ html[data-theme="dark"] .dialog {
   width: 11px;
   height: 11px;
 }
+
+/* tab strip: full names, scrolls sideways with the wheel, no scrollbar */
+.titlebar-tabs {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.titlebar-tabs::-webkit-scrollbar {
+  display: none;
+}
+.titlebar-tabs .tab {
+  max-width: none;
+  flex: 0 0 auto;
+}
+.tab-name {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.titlebar-tabs .tab-name {
+  overflow: visible;
+  text-overflow: clip;
+}

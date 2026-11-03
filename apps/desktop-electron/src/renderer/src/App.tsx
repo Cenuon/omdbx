@@ -168,7 +168,16 @@ function Titlebar(props: {
         </div>
       </Show>
 
-      <div class="titlebar-tabs" role="tablist">
+      <div
+        class="titlebar-tabs"
+        role="tablist"
+        onWheel={(event) => {
+          const strip = event.currentTarget
+          if (strip.scrollWidth <= strip.clientWidth) return
+          strip.scrollLeft += event.deltaY + event.deltaX
+          event.preventDefault()
+        }}
+      >
         <For each={props.tabs}>
           {(tab) => (
             <div
