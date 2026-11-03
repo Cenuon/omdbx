@@ -4600,3 +4600,53 @@ html[data-theme="dark"] {
   background: var(--update-color);
   filter: brightness(1.08);
 }
+
+/* ---------- dialog, matched to the OpenCode console dialog ----------
+   radius 6px, no border: the hairline is a 0.5px ring inside the shadow,
+   header/body/footer use flat 16px padding with no separators. */
+.dialog {
+  border: 0;
+  border-radius: 6px;
+  box-shadow:
+    0 16px 32px 0 rgba(20, 20, 16, 0.04),
+    0 8px 16px 0 rgba(20, 20, 16, 0.08),
+    0 0 0 0.5px rgba(20, 20, 16, 0.12);
+}
+html[data-theme="dark"] .dialog {
+  box-shadow:
+    0 16px 32px 0 rgba(0, 0, 0, 0.3),
+    0 8px 16px 0 rgba(0, 0, 0, 0.3),
+    0 0 0 0.5px rgba(233, 233, 227, 0.16);
+}
+.dialog-head {
+  height: auto;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  padding: 16px;
+  border-bottom: 0;
+}
+.dialog-head h2 {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 530;
+  line-height: 20px;
+  letter-spacing: -0.13px;
+}
+.dialog-head .icon-btn {
+  width: 20px;
+  height: 20px;
+  margin-top: -2px;
+  border-radius: 4px;
+  color: var(--muted);
+}
+.dialog-body {
+  gap: 14px;
+  padding: 0 16px 16px;
+}
+.dialog-foot {
+  padding: 0 16px 16px;
+  border-top: 0;
+}
+.dialog-foot-right {
+  gap: 8px;
+}
