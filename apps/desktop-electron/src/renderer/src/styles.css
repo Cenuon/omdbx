@@ -4534,3 +4534,24 @@ html[data-theme="dark"] {
   background: rgba(8, 10, 8, 0.32);
   backdrop-filter: none;
 }
+
+/* a coloured connection tints its whole subtree */
+.tree-group.conn-tinted > .tree-row,
+.tree-group.conn-tinted .tree-children .tree-row {
+  background: color-mix(in srgb, var(--conn-color) 14%, transparent);
+}
+.tree-group.conn-tinted > .tree-row:hover,
+.tree-group.conn-tinted .tree-children .tree-row:hover {
+  background: color-mix(in srgb, var(--conn-color) 22%, transparent);
+}
+
+/* a tab opened from a coloured connection keeps that colour */
+.tab.conn-tinted {
+  background: color-mix(in srgb, var(--conn-color) 16%, transparent);
+}
+.tab.conn-tinted:hover {
+  background: color-mix(in srgb, var(--conn-color) 24%, transparent);
+}
+.tab.conn-tinted.active {
+  background: color-mix(in srgb, var(--conn-color) 30%, transparent);
+}

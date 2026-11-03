@@ -124,6 +124,7 @@ function Titlebar(props: {
   onToggleSidebar: () => void
   onToggleRight: () => void
   onSelect: (id: string) => void
+  tabColor: (tab: TabItem) => string | undefined
   onCloseTab: (id: string) => void
   onNewQuery: () => void
   onTheme: () => void
@@ -161,7 +162,8 @@ function Titlebar(props: {
           {(tab) => (
             <div
               class="tab"
-              classList={{ active: props.active === tab.id }}
+              classList={{ active: props.active === tab.id, "conn-tinted": !!props.tabColor(tab) }}
+              style={props.tabColor(tab) ? { "--conn-color": props.tabColor(tab) } : undefined}
               role="tab"
               aria-selected={props.active === tab.id}
               tabindex="0"
@@ -295,6 +297,7 @@ interface SidebarProps {
   onToggle: () => void
   onNewConnection: () => void
   onNewQuery: () => void
+  onConnectionsChanged: () => void
   onToast: (message: string) => void
   onMinimize: () => void
   onMaximize: () => void
@@ -622,6 +625,7 @@ function Sidebar(props: SidebarProps) {
     try {
       await saveConnections([{ ...connection, color }], [])
       await refreshConnections()
+      props.onConnectionsChanged()
     } catch (error) {
       props.onToast(`设置颜色失败：${error instanceof Error ? error.message : String(error)}`)
     }
@@ -687,15 +691,16 @@ function Sidebar(props: SidebarProps) {
 
   function renderConnection(conn: DbxConnection, depth: number) {
     const icon = connectionIcon(conn.db_type)
-    const style = conn.color
-      ? { "padding-left": depth > 0 ? `${depth * 14}px` : undefined, "--conn-color": conn.color }
-      : { "padding-left": depth > 0 ? `${depth * 14}px` : undefined }
     return (
-      <div class="tree-group" data-open={openConnections()[conn.id] ? "true" : "false"}>
+      <div
+        class="tree-group"
+        classList={{ "conn-tinted": !!conn.color }}
+        style={conn.color ? { "--conn-color": conn.color } : undefined}
+        data-open={openConnections()[conn.id] ? "true" : "false"}
+      >
         <button
           class="tree-row db-row"
-          classList={{ "conn-colored": !!conn.color }}
-          style={style}
+          style={{ "padding-left": depth > 0 ? `${depth * 14}px` : undefined }}
           onClick={() => toggleConnection(conn)}
           aria-expanded={openConnections()[conn.id] ? "true" : "false"}
           onContextMenu={(event) => {
@@ -2630,6 +2635,7 @@ export default function App() {
           onToggle={() => setSidebarCollapsed(true)}
           onNewConnection={() => setNewConnectionOpen(true)}
           onNewQuery={openQuery}
+          onConnectionsChanged={() => void refreshBackend()}
           onToast={showToast}
           onMinimize={() => windowAction("minimize")}
           onMaximize={() => windowAction("maximize")}
@@ -2648,6 +2654,7 @@ export default function App() {
           settingsOpen={settingsOpen()}
           theme={theme()}
           onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
+          tabColor={(tab) => connections().find((conn) => tab.id.startsWith(`${conn.id}|`))?.color ?? undefined}
           onToggleRight={() => setRightCollapsed((value) => !value)}
           onSelect={(id) => {
             setSettingsOpen(false)
