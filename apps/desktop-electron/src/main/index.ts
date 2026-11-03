@@ -66,6 +66,10 @@ ipcMain.on("window:maximize", () => {
 })
 ipcMain.on("window:close", () => mainWindow?.close())
 
+ipcMain.on("shell:open-external", (_event, url: unknown) => {
+  if (typeof url === "string" && /^https?:\/\//.test(url)) void shell.openExternal(url)
+})
+
 app.whenReady().then(() => {
   createWindow()
   app.on("activate", () => {

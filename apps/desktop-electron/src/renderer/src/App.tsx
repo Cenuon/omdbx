@@ -77,6 +77,14 @@ import {
 import NewConnectionDialog from "./NewConnectionDialog"
 import ContextMenu, { type MenuItem } from "./ContextMenu"
 import { databaseTypes } from "./dbx/databaseTypes"
+import { checkForUpdate, type UpdateInfo } from "./dbx/updates"
+
+/** Colour of the update badge by how far behind the build is. */
+const UPDATE_COLORS: Record<UpdateInfo["level"], string> = {
+  patch: "#3f7fd0",
+  minor: "#e0a83c",
+  major: "#e5534b",
+}
 
 /** db_type → bundled icon, first entry wins so profile variants reuse the base icon. */
 const CONNECTION_ICONS = new Map<string, string>()
@@ -125,6 +133,8 @@ function Titlebar(props: {
   onToggleRight: () => void
   onSelect: (id: string) => void
   tabColor: (tab: TabItem) => string | undefined
+  update: UpdateInfo | null
+  onUpdate: () => void
   onCloseTab: (id: string) => void
   onNewQuery: () => void
   onTheme: () => void
@@ -202,6 +212,19 @@ function Titlebar(props: {
       </div>
 
       <div class="titlebar-right">
+        <Show when={props.update}>
+          {(info) => (
+            <button
+              class="titlebar-toggle update-pill"
+              style={{ "--update-color": UPDATE_COLORS[info().level] }}
+              aria-label={`有新版本 ${info().version}`}
+              title={`有新版本 ${info().version}，点击查看下载`}
+              onClick={props.onUpdate}
+            >
+              <Download size={15} />
+            </button>
+          )}
+        </Show>
         <button class="titlebar-toggle" aria-label="命令面板" title="命令面板 ⌘K" onClick={props.onCommand}>
           <Search size={16} />
         </button>
@@ -1910,6 +1933,7 @@ export default function App() {
   const [activePanel, setActivePanel] = createSignal<Panel>("ai")
   const [settingsOpen, setSettingsOpen] = createSignal(false)
   const [rowStyle, setRowStyle] = createSignal<RowStyle>(initialRowStyle())
+  const [update, setUpdate] = createSignal<UpdateInfo | null>(null)
   const [gridFont, setGridFont] = createSignal<GridFont>(initialGridFont())
   const [backendStatus, setBackendStatus] = createSignal<"checking" | "online" | "offline">("checking")
   const [connections, setConnections] = createSignal<DbxConnection[]>([])
@@ -2678,6 +2702,7 @@ export default function App() {
 
   onMount(() => {
     void refreshBackend()
+    void checkForUpdate().then(setUpdate)
     window.api?.onMaximized(setMaximized)
     const onKey = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey
@@ -2750,6 +2775,13 @@ export default function App() {
           theme={theme()}
           onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
           tabColor={(tab) => connections().find((conn) => tab.id.startsWith(`${conn.id}|`))?.color ?? undefined}
+          update={update()}
+          onUpdate={() => {
+            const info = update()
+            if (!info) return
+            if (window.api?.openExternal) window.api.openExternal(info.url)
+            else window.open(info.url, "_blank")
+          }}
           onToggleRight={() => setRightCollapsed((value) => !value)}
           onSelect={(id) => {
             setSettingsOpen(false)

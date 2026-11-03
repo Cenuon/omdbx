@@ -4587,3 +4587,16 @@ html[data-theme="dark"] {
   font-family: var(--font-mono);
   font-size: 10px;
 }
+
+/* update badge: filled circle, colour by how far behind the build is */
+.titlebar-toggle.update-pill {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--update-color);
+  color: #fff;
+}
+.titlebar-toggle.update-pill:hover {
+  background: var(--update-color);
+  filter: brightness(1.08);
+}
