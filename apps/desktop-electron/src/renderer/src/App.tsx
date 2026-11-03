@@ -271,7 +271,10 @@ function Sidebar(props: SidebarProps) {
   const [connections, setConnections] = createSignal<DbxConnection[]>([])
   const [openConnections, setOpenConnections] = createSignal<Record<string, boolean>>({})
   const [connectionData, setConnectionData] = createSignal<
-    Record<string, { databases: Array<{ name: string }>; tables: Record<string, string[]>; loading: boolean }>
+    Record<
+      string,
+      { databases: Array<{ name: string }>; schemas: string[]; tables: Record<string, string[]>; loading: boolean }
+    >
   >({})
   const [activeKey, setActiveKey] = createSignal("")
 
@@ -306,11 +309,11 @@ function Sidebar(props: SidebarProps) {
 
   async function loadConnection(conn: DbxConnection) {
     const id = conn.id
-    setConnectionData((data) => ({ ...data, [id]: { databases: [], tables: {}, loading: true } }))
+    setConnectionData((data) => ({ ...data, [id]: { databases: [], schemas: [], tables: {}, loading: true } }))
     try {
       await connectDb(conn)
       const databases = await getDatabases(id)
-      const info = { databases, tables: {} as Record<string, string[]>, loading: false }
+      const info = { databases, schemas: [] as string[], tables: {} as Record<string, string[]>, loading: false }
       setConnectionData((data) => ({ ...data, [id]: info }))
       const database = conn.database || databases[0]?.name
       if (database) {
@@ -321,6 +324,7 @@ function Sidebar(props: SidebarProps) {
           ...data,
           [id]: {
             databases,
+            schemas,
             loading: false,
             tables: { [`${database}|${schema}`]: tables.map((table) => table.name) },
           },
@@ -329,7 +333,7 @@ function Sidebar(props: SidebarProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       props.onToast(`${conn.name}: ${message}`)
-      setConnectionData((data) => ({ ...data, [id]: { databases: [], tables: {}, loading: false } }))
+      setConnectionData((data) => ({ ...data, [id]: { databases: [], schemas: [], tables: {}, loading: false } }))
     }
   }
 
@@ -349,6 +353,12 @@ function Sidebar(props: SidebarProps) {
 
   function currentSchema(conn: DbxConnection): string {
     return conn.default_schema || "main"
+  }
+
+  // the database/schema row only carries information when there is more than one of them
+  function showPath(conn: DbxConnection): boolean {
+    const data = connectionData()[conn.id]
+    return (data?.databases.length ?? 0) > 1 || (data?.schemas.length ?? 0) > 1
   }
 
   return (
@@ -411,56 +421,49 @@ function Sidebar(props: SidebarProps) {
                 </button>
                 <Show when={openConnections()[conn.id]}>
                   <div class="tree-children">
-                    <Show
-                      when={!connectionData()[conn.id]?.loading}
-                      fallback={<div class="tree-row leaf muted" style={{ "padding-left": "20px" }}>加载中…</div>}
-                    >
+                    <Show when={!connectionData()[conn.id]?.loading} fallback={<div class="tree-hint">加载中…</div>}>
                       <Show
                         when={(connectionData()[conn.id]?.databases.length ?? 0) > 0}
-                        fallback={<div class="tree-row leaf muted" style={{ "padding-left": "20px" }}>连接失败</div>}
+                        fallback={<div class="tree-hint">连接失败</div>}
                       >
-                        <For each={[currentDatabase(conn)]}>
-                          {(database) => (
-                            <>
-                              <div class="tree-row leaf" style={{ "padding-left": "20px" }}>
-                                <span class="chev-space" />
-                                <Database size={13} />
-                                <span class="tree-name">{database}</span>
-                              </div>
-                              <div class="tree-row leaf" style={{ "padding-left": "34px" }}>
-                                <span class="chev-space" />
-                                <Folder size={13} />
-                                <span class="tree-name">{currentSchema(conn)}</span>
-                              </div>
-                              <div class="tree-row leaf" style={{ "padding-left": "48px" }}>
-                                <span class="chev-space" />
-                                <Folder size={13} />
-                                <span class="tree-name">表</span>
-                                <span class="tree-count">{connectionTables(conn, database, currentSchema(conn)).length}</span>
-                              </div>
-                              <For each={connectionTables(conn, database, currentSchema(conn))}>
-                                {(table) => {
-                                  const key = `${conn.id}|${database}|${currentSchema(conn)}|${table}`
-                                  return (
-                                    <button
-                                      class="tree-row leaf"
-                                      classList={{ active: activeKey() === key }}
-                                      style={{ "padding-left": "62px" }}
-                                      onClick={() => {
-                                        setActiveKey(key)
-                                        props.onOpenTable(conn, database, currentSchema(conn), table)
-                                      }}
-                                    >
-                                      <span class="chev-space" />
-                                      <Table2 size={12} />
-                                      <span class="tree-name">{table}</span>
-                                    </button>
-                                  )
-                                }}
-                              </For>
-                            </>
-                          )}
-                        </For>
+                        <Show when={showPath(conn)}>
+                          <div class="tree-row tree-path" style={{ "padding-left": "20px" }}>
+                            <span class="tree-name">
+                              {currentDatabase(conn)} · {currentSchema(conn)}
+                            </span>
+                            <span class="tree-count">
+                              {connectionTables(conn, currentDatabase(conn), currentSchema(conn)).length}
+                            </span>
+                          </div>
+                        </Show>
+                        <Show
+                          when={connectionTables(conn, currentDatabase(conn), currentSchema(conn)).length > 0}
+                          fallback={
+                            <div class="tree-hint" style={{ "padding-left": "20px" }}>
+                              没有表
+                            </div>
+                          }
+                        >
+                          <For each={connectionTables(conn, currentDatabase(conn), currentSchema(conn))}>
+                            {(table) => {
+                              const key = `${conn.id}|${currentDatabase(conn)}|${currentSchema(conn)}|${table}`
+                              return (
+                                <button
+                                  class="tree-row leaf tree-table"
+                                  classList={{ active: activeKey() === key }}
+                                  style={{ "padding-left": "20px" }}
+                                  onClick={() => {
+                                    setActiveKey(key)
+                                    props.onOpenTable(conn, currentDatabase(conn), currentSchema(conn), table)
+                                  }}
+                                >
+                                  <Table2 size={12} />
+                                  <span class="tree-name">{table}</span>
+                                </button>
+                              )
+                            }}
+                          </For>
+                        </Show>
                       </Show>
                     </Show>
                   </div>

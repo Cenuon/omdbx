@@ -3543,3 +3543,87 @@ html[data-theme="dark"] {
   flex: 0 0 44px;
   padding: 0 8px 0 12px;
 }
+
+/* ---------- connection tree ---------- */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--surface-3);
+  color: var(--faint);
+  font-size: 9.5px;
+  letter-spacing: 0.01em;
+  flex: 0 0 auto;
+}
+
+.sidebar .tree-row.db-row {
+  height: 30px;
+  gap: 6px;
+}
+.sidebar .tree-row.db-row .tree-name {
+  flex: 1 1 auto;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.sidebar .tree-row.db-row > svg:not(.chev) {
+  color: var(--muted);
+}
+.sidebar .tree-row.db-row .row-end {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+.tree-children {
+  position: relative;
+  padding: 1px 0 4px;
+}
+/* spine that ties the children back to the connection */
+.tree-children::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  bottom: 8px;
+  left: 6px;
+  width: 1px;
+  background: var(--line);
+}
+
+.tree-path {
+  height: 22px;
+  gap: 6px;
+  color: var(--faint);
+  font-size: 10.5px;
+  cursor: default;
+}
+.tree-path:hover {
+  background: transparent;
+  color: var(--faint);
+}
+.tree-path .tree-count {
+  font-size: 10px;
+}
+
+.sidebar .tree-row.tree-table {
+  height: 26px;
+  gap: 7px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.sidebar .tree-row.tree-table > svg {
+  width: 12px;
+  height: 12px;
+  color: var(--faint);
+}
+.sidebar .tree-row.tree-table:hover > svg {
+  color: var(--muted);
+}
+
+.tree-hint {
+  padding: 3px 10px 3px 20px;
+  color: var(--faint);
+  font-size: 11px;
+}
