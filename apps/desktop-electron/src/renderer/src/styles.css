@@ -4286,3 +4286,60 @@ html[data-theme="dark"] {
 .grid-row {
   height: calc(var(--grid-row-h, var(--row)) * var(--grid-scale, 1));
 }
+
+/* menu polish: softer popover, larger rows, icon gutter */
+.menu {
+  min-width: 236px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+  box-shadow: 0 14px 38px -14px rgba(20, 20, 16, 0.3), 0 2px 10px rgba(20, 20, 16, 0.07);
+  backdrop-filter: blur(14px);
+}
+.menu-title {
+  margin: 2px 2px 6px;
+  padding: 4px 8px 9px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+.menu-item {
+  height: 34px;
+  gap: 10px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.menu-icon {
+  width: 18px;
+  flex: 0 0 18px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  transition: color 100ms ease;
+}
+.menu-item:hover:not(.disabled) .menu-icon {
+  color: var(--ink);
+}
+.menu-hint {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-size: 12px;
+}
+.menu-arrow {
+  flex: 0 0 auto;
+  color: var(--faint);
+}
+.menu-sep {
+  height: 1px;
+  margin: 5px 6px;
+  background: var(--line);
+}
+.menu-sub {
+  padding: 6px;
+  border-radius: 13px;
+}

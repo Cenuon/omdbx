@@ -5,11 +5,17 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  CircleSlash,
+  ClipboardPaste,
   Clock,
+  Columns3,
   Copy,
   Database,
   Download,
   Ellipsis,
+  Eraser,
+  EyeOff,
+  FileCode2,
   FileText,
   Filter,
   Folder,
@@ -20,10 +26,14 @@ import {
   KeyRound,
   List,
   Lock,
+  MessageSquare,
   Moon,
+  MoveHorizontal,
+  MoveVertical,
   PanelLeft,
   PanelRight,
   Paperclip,
+  Pin,
   Play,
   Plus,
   RefreshCw,
@@ -35,8 +45,11 @@ import {
   Sun,
   Table2,
   Terminal,
+  Trash2,
+  Type,
   WandSparkles,
   X,
+  ZoomIn,
 } from "lucide-solid"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
 import SettingsView from "./SettingsView"
@@ -1900,10 +1913,10 @@ export default function App() {
       )
 
     return [
-      { label: "复制", onSelect: () => void copyText(delimited(values, "\t", false), "列数据") },
-      { label: "复制字段名称", onSelect: () => void copyText(column.name, "字段名称") },
+      { label: "复制", icon: <Copy size={15} />, onSelect: () => void copyText(delimited(values, "\t", false), "列数据") },
+      { label: "复制字段名称", icon: <Type size={15} />, onSelect: () => void copyText(column.name, "字段名称") },
       {
-        label: "复制为",
+        label: "复制为", icon: <FileCode2 size={15} />,
         submenu: [
           { label: "Insert 语句", onSelect: () => void copyText(insertSql, "Insert 语句") },
           { label: "Update 语句", disabled: !updateSql, onSelect: () => void copyText(updateSql, "Update 语句") },
@@ -1919,54 +1932,54 @@ export default function App() {
           { label: "JSON", onSelect: () => void copyText(JSON.stringify(values, null, 2), "JSON") },
         ],
       },
-      { label: "粘贴", onSelect: () => void pasteColumn(index) },
+      { label: "粘贴", icon: <ClipboardPaste size={15} />, onSelect: () => void pasteColumn(index) },
       { separator: true },
       {
-        label: "显示或隐藏列…",
+        label: "显示或隐藏列…", icon: <Columns3 size={15} />,
         onSelect: () => {
           setDialogValue("")
           setColumnDialog({ kind: "hide", index })
         },
       },
       {
-        label: "隐藏列",
+        label: "隐藏列", icon: <EyeOff size={15} />,
         onSelect: () => updateColumnView({ hidden: [...columnView().hidden, column.name] }),
       },
-      { label: "冻结列", onSelect: () => freezeColumn(index) },
+      { label: "冻结列", icon: <Pin size={15} />, onSelect: () => freezeColumn(index) },
       { separator: true },
       {
-        label: "设置列宽…",
+        label: "设置列宽…", icon: <MoveHorizontal size={15} />,
         onSelect: () => {
           setDialogValue(String(Math.round(columnView().widths[column.name] ?? 150)))
           setColumnDialog({ kind: "width", index })
         },
       },
       {
-        label: "设置所有列宽度…",
+        label: "设置所有列宽度…", icon: <MoveHorizontal size={15} />,
         onSelect: () => {
           setDialogValue("150")
           setColumnDialog({ kind: "allWidth", index })
         },
       },
-      { label: "调整列宽以适应内容", onSelect: () => fitColumns([index]) },
+      { label: "调整列宽以适应内容", icon: <WandSparkles size={15} />, onSelect: () => fitColumns([index]) },
       {
-        label: "调整所有列的适合大小",
+        label: "调整所有列的适合大小", icon: <WandSparkles size={15} />,
         onSelect: () => fitColumns(browse().columns.map((_, position) => position)),
       },
       { separator: true },
       {
-        label: "显示字段类型",
+        label: "显示字段类型", icon: <Type size={15} />,
         checked: columnView().showTypes,
         onSelect: () => updateColumnView({ showTypes: !columnView().showTypes }),
       },
       {
-        label: "显示注释",
+        label: "显示注释", icon: <MessageSquare size={15} />,
         checked: columnView().showComments,
         onSelect: () => updateColumnView({ showComments: !columnView().showComments }),
       },
       { separator: true },
       {
-        label: "缩放",
+        label: "缩放", icon: <ZoomIn size={15} />,
         submenu: [0.9, 1, 1.1, 1.25].map((scale) => ({
           label: `${Math.round(scale * 100)}%`,
           checked: columnView().scale === scale,
@@ -2006,13 +2019,13 @@ export default function App() {
     )
 
     return [
-      { label: "添加记录", onSelect: () => addRow() },
-      { label: "删除记录", onSelect: () => deleteRow(rowIndex) },
+      { label: "添加记录", icon: <Plus size={15} />, onSelect: () => addRow() },
+      { label: "删除记录", icon: <Trash2 size={15} />, onSelect: () => deleteRow(rowIndex) },
       { separator: true },
-      { label: "复制", onSelect: () => void copyText(delimited(values as Array<string | null>, "\t", false), "行数据") },
-      { label: "复制字段名称", onSelect: () => void copyText(columns.map((column) => column.name).join("\t"), "字段名称") },
+      { label: "复制", icon: <Copy size={15} />, onSelect: () => void copyText(delimited(values as Array<string | null>, "\t", false), "行数据") },
+      { label: "复制字段名称", icon: <Type size={15} />, onSelect: () => void copyText(columns.map((column) => column.name).join("\t"), "字段名称") },
       {
-        label: "复制为",
+        label: "复制为", icon: <FileCode2 size={15} />,
         submenu: [
           { label: "Insert 语句", onSelect: () => void copyText(insertSql, "Insert 语句") },
           { label: "Update 语句", disabled: !updateSql, onSelect: () => void copyText(updateSql, "Update 语句") },
@@ -2041,17 +2054,17 @@ export default function App() {
           { label: "JSON", onSelect: () => void copyText(json, "JSON") },
         ],
       },
-      { label: "粘贴", onSelect: () => void pasteRow(rowIndex) },
+      { label: "粘贴", icon: <ClipboardPaste size={15} />, onSelect: () => void pasteRow(rowIndex) },
       { separator: true },
       {
-        label: "设置行高…",
+        label: "设置行高…", icon: <MoveVertical size={15} />,
         onSelect: () => {
           setDialogValue(String(columnView().rowHeight ?? Math.round(document.querySelector(".grid-row")?.getBoundingClientRect().height ?? 30)))
           setColumnDialog({ kind: "rowHeight", index: rowIndex })
         },
       },
       {
-        label: "缩放",
+        label: "缩放", icon: <ZoomIn size={15} />,
         submenu: [0.9, 1, 1.1, 1.25].map((scale) => ({
           label: `${Math.round(scale * 100)}%`,
           checked: columnView().scale === scale,
@@ -2136,16 +2149,16 @@ export default function App() {
       `${column.name}\n${quoted ? delimited([value as string | null], separator, true) : text}`
 
     return [
-      { label: "设置为空白字符串", onSelect: () => stageEdit(rowIndex, columnIndex, "") },
-      { label: "设置为 NULL", onSelect: () => stageEdit(rowIndex, columnIndex, null) },
+      { label: "设置为空白字符串", icon: <Eraser size={15} />, onSelect: () => stageEdit(rowIndex, columnIndex, "") },
+      { label: "设置为 NULL", icon: <CircleSlash size={15} />, onSelect: () => stageEdit(rowIndex, columnIndex, null) },
       { separator: true },
-      { label: "添加记录", onSelect: () => addRow() },
-      { label: "删除记录...", onSelect: () => deleteRow(rowIndex) },
+      { label: "添加记录", icon: <Plus size={15} />, onSelect: () => addRow() },
+      { label: "删除记录...", icon: <Trash2 size={15} />, onSelect: () => deleteRow(rowIndex) },
       { separator: true },
-      { label: "复制", onSelect: () => void copyText(text, "单元格") },
-      { label: "复制字段名称", onSelect: () => void copyText(column.name, "字段名称") },
+      { label: "复制", icon: <Copy size={15} />, onSelect: () => void copyText(text, "单元格") },
+      { label: "复制字段名称", icon: <Type size={15} />, onSelect: () => void copyText(column.name, "字段名称") },
       {
-        label: "复制为",
+        label: "复制为", icon: <FileCode2 size={15} />,
         submenu: [
           { label: "Insert 语句", onSelect: () => void copyText(insertSql, "Insert 语句") },
           { label: "Update 语句", disabled: !updateSql, onSelect: () => void copyText(updateSql, "Update 语句") },
@@ -2161,17 +2174,17 @@ export default function App() {
           { label: "JSON", onSelect: () => void copyText(JSON.stringify(value, null, 2), "JSON") },
         ],
       },
-      { label: "粘贴", onSelect: () => void pasteCell(rowIndex, columnIndex) },
+      { label: "粘贴", icon: <ClipboardPaste size={15} />, onSelect: () => void pasteCell(rowIndex, columnIndex) },
       { separator: true },
       {
-        label: "缩放",
+        label: "缩放", icon: <ZoomIn size={15} />,
         submenu: [0.9, 1, 1.1, 1.25].map((scale) => ({
           label: `${Math.round(scale * 100)}%`,
           checked: columnView().scale === scale,
           onSelect: () => updateColumnView({ scale }),
         })),
       },
-      { label: "刷新", onSelect: () => void refreshTable() },
+      { label: "刷新", icon: <RefreshCw size={15} />, onSelect: () => void refreshTable() },
     ]
   }
 
@@ -2455,6 +2468,7 @@ export default function App() {
           <ContextMenu
             x={menu().x}
             y={menu().y}
+            title={`${activeTarget()?.table ?? ""} · ${browse().columns[menu().index]?.name ?? ""}`}
             items={columnMenuItems(menu().index)}
             onClose={() => setColumnMenu(null)}
           />
@@ -2465,6 +2479,7 @@ export default function App() {
           <ContextMenu
             x={menu().x}
             y={menu().y}
+            title={`${activeTarget()?.table ?? ""} · ${browse().columns[menu().column]?.name ?? ""}`}
             items={cellMenuItems(menu().row, menu().column)}
             onClose={() => setCellMenu(null)}
           />
@@ -2472,7 +2487,13 @@ export default function App() {
       </Show>
       <Show when={rowMenu()}>
         {(menu) => (
-          <ContextMenu x={menu().x} y={menu().y} items={rowMenuItems(menu().index)} onClose={() => setRowMenu(null)} />
+          <ContextMenu
+            x={menu().x}
+            y={menu().y}
+            title={`${activeTarget()?.table ?? ""} · 第 ${menu().index + 1} 行`}
+            items={rowMenuItems(menu().index)}
+            onClose={() => setRowMenu(null)}
+          />
         )}
       </Show>
       <Show when={columnDialog()}>
