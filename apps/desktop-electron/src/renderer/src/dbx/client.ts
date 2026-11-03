@@ -7,6 +7,8 @@ export interface DbxConnection {
   database?: string
   default_schema?: string
   connected?: boolean
+  /** hex colour used to tint the connection in the sidebar */
+  color?: string | null
 }
 
 export interface DbxTable {
@@ -81,10 +83,33 @@ export function testConnection(config: DbxConnectionInput): Promise<string> {
 }
 
 export function saveConnection(config: DbxConnectionInput): Promise<void> {
+  return saveConnections([config], [])
+}
+
+export function saveConnections(configs: unknown[], removedIds: string[]): Promise<void> {
   return request<void>("/api/connection/save", {
     method: "POST",
-    body: JSON.stringify({ configs: [config], removedIds: [] }),
+    body: JSON.stringify({ configs, removedIds }),
   })
+}
+
+export function disconnectDb(connectionId: string): Promise<void> {
+  return request<void>("/api/connection/disconnect", {
+    method: "POST",
+    body: JSON.stringify({ connectionId }),
+  })
+}
+
+/** Free-form JSON blob the backend stores in a single sidebar_layout row. */
+export function saveSidebarLayout(layout: unknown): Promise<void> {
+  return request<void>("/api/layout/sidebar", {
+    method: "POST",
+    body: JSON.stringify({ layout }),
+  })
+}
+
+export function loadSidebarLayout(): Promise<unknown> {
+  return request<unknown>("/api/layout/sidebar")
 }
 
 export function connectDb(config: DbxConnection): Promise<string> {

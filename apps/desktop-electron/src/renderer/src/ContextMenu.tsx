@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from "solid-js"
-import { Check, ChevronRight } from "lucide-solid"
+import { Check, ChevronRight, CircleSlash } from "lucide-solid"
 import type { JSX } from "solid-js"
 
 export interface MenuItem {
@@ -10,6 +10,9 @@ export interface MenuItem {
   icon?: JSX.Element
   /** right-aligned muted text, like a count */
   hint?: string
+  /** renders a row of colour swatches instead of a normal item */
+  swatches?: Array<{ value: string | null; color: string }>
+  onSwatch?: (value: string | null) => void
   submenu?: MenuItem[]
   onSelect?: () => void
 }
@@ -48,6 +51,34 @@ export default function ContextMenu(props: {
         <For each={props.items}>
           {(item, index) => (
             <Show when={!item.separator} fallback={<div class="menu-sep" />}>
+              <Show when={item.swatches}>
+                <div class="menu-item menu-swatch-row">
+                  <span class="menu-icon" />
+                  <span class="menu-label">{item.label}</span>
+                  <span class="menu-swatches">
+                    <For each={item.swatches}>
+                      {(swatch) => (
+                        <button
+                          class="menu-swatch"
+                          classList={{ active: swatch.value === null }}
+                          style={swatch.color ? { background: swatch.color } : undefined}
+                          aria-label={swatch.value ?? "无颜色"}
+                          title={swatch.value ?? "无颜色"}
+                          onClick={() => {
+                            item.onSwatch?.(swatch.value)
+                            props.onClose()
+                          }}
+                        >
+                          <Show when={!swatch.color}>
+                            <CircleSlash size={13} />
+                          </Show>
+                        </button>
+                      )}
+                    </For>
+                  </span>
+                </div>
+              </Show>
+              <Show when={!item.swatches}>
               <div class="menu-wrap" onMouseEnter={() => setOpenSub(item.submenu ? index() : null)}>
                 <button
                   class="menu-item"
@@ -98,6 +129,7 @@ export default function ContextMenu(props: {
                   </div>
                 </Show>
               </div>
+              </Show>
             </Show>
           )}
         </For>

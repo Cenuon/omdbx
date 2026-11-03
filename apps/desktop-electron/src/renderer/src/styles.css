@@ -4425,3 +4425,55 @@ html[data-theme="dark"] {
   --row-stripe-a: rgba(255, 255, 255, 0.014);
   --row-stripe-b: rgba(96, 156, 255, 0.045);
 }
+
+/* ---------- connection folders, icons and colours ---------- */
+.sidebar .tree-row.folder-row {
+  height: 28px;
+  gap: 6px;
+  color: var(--ink);
+  font-weight: 500;
+}
+.sidebar .tree-row.folder-row > svg:not(.chev) {
+  color: var(--amber);
+}
+.conn-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  object-fit: contain;
+}
+.tree-row.conn-colored {
+  background: color-mix(in srgb, var(--conn-color) 16%, transparent);
+}
+.tree-row.conn-colored:hover {
+  background: color-mix(in srgb, var(--conn-color) 24%, transparent);
+}
+.conn-star {
+  color: var(--amber);
+  flex: 0 0 auto;
+}
+.menu-swatch-row {
+  cursor: default;
+}
+.menu-swatch-row:hover {
+  background: transparent;
+}
+.menu-swatches {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.menu-swatch {
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  color: var(--faint);
+  cursor: pointer;
+  transition: transform 100ms ease;
+}
+.menu-swatch:hover {
+  transform: scale(1.15);
+}

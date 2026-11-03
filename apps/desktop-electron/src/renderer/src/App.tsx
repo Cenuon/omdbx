@@ -19,6 +19,8 @@ import {
   FileText,
   Filter,
   Folder,
+  FolderOpen,
+  FolderPlus,
   Grip,
   History,
   Info,
@@ -36,12 +38,14 @@ import {
   Pin,
   Play,
   Plus,
+  Power,
   RefreshCw,
   Search,
   Send,
   Settings2,
   Sparkles,
   SquarePen,
+  Star,
   Sun,
   Table2,
   Terminal,
@@ -57,17 +61,28 @@ import { historyItems, sqlFiles, type GridFont, type RowStyle, type TabItem } fr
 import {
   browseTable,
   connectDb,
+  disconnectDb,
   executeQuery,
   getConnections,
   getDatabases,
   getSchemas,
   getTables,
+  loadSidebarLayout,
   prepareDataGridSave,
+  saveConnections,
+  saveSidebarLayout,
   type DbxConnection,
   type DbxConnectionInput,
 } from "./dbx/client"
 import NewConnectionDialog from "./NewConnectionDialog"
 import ContextMenu, { type MenuItem } from "./ContextMenu"
+import { databaseTypes } from "./dbx/databaseTypes"
+
+/** db_type → bundled icon, first entry wins so profile variants reuse the base icon. */
+const CONNECTION_ICONS = new Map<string, string>()
+for (const type of databaseTypes) {
+  if (!CONNECTION_ICONS.has(type.dbType)) CONNECTION_ICONS.set(type.dbType, type.icon)
+}
 
 type Theme = "light" | "dark"
 type Panel = "ai" | "sql" | "history"
@@ -279,6 +294,7 @@ interface SidebarProps {
   pendingId: string | null
   onToggle: () => void
   onNewConnection: () => void
+  onNewQuery: () => void
   onToast: (message: string) => void
   onMinimize: () => void
   onMaximize: () => void
@@ -286,8 +302,24 @@ interface SidebarProps {
   onOpenTable: (connection: DbxConnection, database: string, schema: string, table: string) => void
 }
 
-/** Catalog schemas that only get in the way of browsing real data. */
-const SYSTEM_DATABASES = new Set([
+interface SidebarFolder {
+  id: string
+  name: string
+  connections: string[]
+}
+
+const CONNECTION_COLORS: Array<{ value: string | null; color: string }> = [
+  { value: "#e5534b", color: "#e5534b" },
+  { value: "#e08c3c", color: "#e08c3c" },
+  { value: "#d9b23c", color: "#d9b23c" },
+  { value: "#4f9d69", color: "#4f9d69" },
+  { value: "#3f7fd0", color: "#3f7fd0" },
+  { value: "#8a6bd1", color: "#8a6bd1" },
+  { value: "#8a8a84", color: "#8a8a84" },
+  { value: null, color: "" },
+]
+
+/** Catalog schemas that only get in the way of browsing real data. */const SYSTEM_DATABASES = new Set([
   "information_schema",
   "performance_schema",
   "pg_catalog",
@@ -312,6 +344,30 @@ function Sidebar(props: SidebarProps) {
   >({})
   const [openDatabases, setOpenDatabases] = createSignal<Record<string, boolean>>({})
   const [activeKey, setActiveKey] = createSignal("")
+  const [folders, setFolders] = createSignal<SidebarFolder[]>([])
+  const [stars, setStars] = createSignal<string[]>([])
+  const [openFolders, setOpenFolders] = createSignal<Record<string, boolean>>({})
+  const [connectionMenu, setConnectionMenu] = createSignal<{ x: number; y: number; conn: DbxConnection } | null>(null)
+  const [folderDialog, setFolderDialog] = createSignal<{ kind: "new" | "rename"; id?: string } | null>(null)
+  const [folderName, setFolderName] = createSignal("")
+
+  let layoutReady = false
+
+  async function loadLayout() {
+    try {
+      const raw = (await loadSidebarLayout()) as { omdbx?: { folders?: SidebarFolder[]; stars?: string[] } } | null
+      if (raw?.omdbx?.folders) setFolders(raw.omdbx.folders)
+      if (raw?.omdbx?.stars) setStars(raw.omdbx.stars)
+    } catch {
+      // the layout row is optional
+    }
+  }
+
+  createEffect(() => {
+    const payload = { omdbx: { folders: folders(), stars: stars() } }
+    if (!layoutReady) return
+    void saveSidebarLayout(payload).catch(() => undefined)
+  })
 
   async function refreshConnections(): Promise<DbxConnection[]> {
     try {
@@ -328,6 +384,9 @@ function Sidebar(props: SidebarProps) {
   createEffect(() => {
     if (props.backendStatus !== "online" || initialized) return
     initialized = true
+    void loadLayout().then(() => {
+      layoutReady = true
+    })
     void refreshConnections().then((list) => {
       if (list.length === 0) return
       const next: Record<string, boolean> = {}
@@ -472,6 +531,226 @@ function Sidebar(props: SidebarProps) {
     )
   }
 
+  function connectionIcon(dbType: string): string | undefined {
+    return CONNECTION_ICONS.get(dbType)
+  }
+
+  function folderOf(connectionId: string): SidebarFolder | undefined {
+    return folders().find((folder) => folder.connections.includes(connectionId))
+  }
+
+  function folderConnections(folder: SidebarFolder): DbxConnection[] {
+    return folder.connections
+      .map((id) => connections().find((conn) => conn.id === id))
+      .filter((conn): conn is DbxConnection => !!conn)
+  }
+
+  function ungroupedConnections(): DbxConnection[] {
+    return connections().filter((conn) => !folderOf(conn.id))
+  }
+
+  function toggleFolder(id: string) {
+    setOpenFolders((state) => ({ ...state, [id]: !state[id] }))
+  }
+
+  function saveFolder() {
+    const name = folderName().trim()
+    if (!name) return
+    const dialog = folderDialog()
+    if (dialog?.kind === "rename" && dialog.id) {
+      setFolders((list) => list.map((folder) => (folder.id === dialog.id ? { ...folder, name } : folder)))
+    } else {
+      setFolders((list) => [...list, { id: crypto.randomUUID(), name, connections: [] }])
+    }
+    setFolderDialog(null)
+    setFolderName("")
+  }
+
+  function moveToFolder(connection: DbxConnection, folderId: string | null) {
+    setFolders((list) =>
+      list.map((folder) => {
+        const without = folder.connections.filter((id) => id !== connection.id)
+        return folder.id === folderId
+          ? { ...folder, connections: [...without, connection.id] }
+          : { ...folder, connections: without }
+      }),
+    )
+    if (folderId) setOpenFolders((state) => ({ ...state, [folderId]: true }))
+  }
+
+  function toggleStar(connection: DbxConnection) {
+    setStars((list) =>
+      list.includes(connection.id) ? list.filter((id) => id !== connection.id) : [...list, connection.id],
+    )
+  }
+
+  async function closeConnection(connection: DbxConnection) {
+    try {
+      await disconnectDb(connection.id)
+      props.onToast(`已关闭连接 ${connection.name}`)
+    } catch (error) {
+      props.onToast(`关闭失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  async function removeConnection(connection: DbxConnection) {
+    try {
+      await saveConnections([], [connection.id])
+      setFolders((list) =>
+        list.map((folder) => ({ ...folder, connections: folder.connections.filter((id) => id !== connection.id) })),
+      )
+      setStars((list) => list.filter((id) => id !== connection.id))
+      await refreshConnections()
+      props.onToast(`已删除连接 ${connection.name}`)
+    } catch (error) {
+      props.onToast(`删除失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  async function duplicateConnection(connection: DbxConnection) {
+    const copy = { ...connection, id: crypto.randomUUID(), name: `${connection.name} 副本` }
+    try {
+      await saveConnections([copy], [])
+      await refreshConnections()
+      props.onToast(`已复制为 ${copy.name}`)
+    } catch (error) {
+      props.onToast(`复制失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  async function setConnectionColor(connection: DbxConnection, color: string | null) {
+    try {
+      await saveConnections([{ ...connection, color }], [])
+      await refreshConnections()
+    } catch (error) {
+      props.onToast(`设置颜色失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  function connectionMenuItems(connection: DbxConnection): MenuItem[] {
+    const folder = folderOf(connection.id)
+    const starred = stars().includes(connection.id)
+    return [
+      { label: "关闭连接", icon: <Power size={15} />, onSelect: () => void closeConnection(connection) },
+      { separator: true },
+      { label: "编辑连接…", icon: <SquarePen size={15} />, disabled: true },
+      { label: "新建连接", icon: <Plus size={15} />, onSelect: () => props.onNewConnection() },
+      { label: "删除连接", icon: <Trash2 size={15} />, onSelect: () => void removeConnection(connection) },
+      { label: "复制连接…", icon: <Copy size={15} />, onSelect: () => void duplicateConnection(connection) },
+      { separator: true },
+      { label: "新建查询", icon: <Terminal size={15} />, onSelect: () => props.onNewQuery() },
+      { separator: true },
+      {
+        label: starred ? "取消星标" : "添加星标",
+        icon: <Star size={15} />,
+        onSelect: () => toggleStar(connection),
+      },
+      {
+        label: "颜色",
+        swatches: CONNECTION_COLORS,
+        onSwatch: (value) => void setConnectionColor(connection, value),
+      },
+      { separator: true },
+      {
+        label: "管理组",
+        icon: <Folder size={15} />,
+        submenu: [
+          {
+            label: "新建文件夹…",
+            onSelect: () => {
+              setFolderName("")
+              setFolderDialog({ kind: "new" })
+            },
+          },
+          ...(folders().length
+            ? [
+                { separator: true } as MenuItem,
+                ...folders().map((item) => ({
+                  label: `移入「${item.name}」`,
+                  checked: folder?.id === item.id,
+                  onSelect: () => moveToFolder(connection, item.id),
+                })),
+              ]
+            : []),
+          ...(folder
+            ? ([
+                { separator: true } as MenuItem,
+                { label: "移出分组", onSelect: () => moveToFolder(connection, null) },
+              ] as MenuItem[])
+            : []),
+        ],
+      },
+      { separator: true },
+      { label: "刷新", icon: <RefreshCw size={15} />, onSelect: () => void refreshConnections() },
+    ]
+  }
+
+  function renderConnection(conn: DbxConnection, depth: number) {
+    const icon = connectionIcon(conn.db_type)
+    const style = conn.color
+      ? { "padding-left": depth > 0 ? `${depth * 14}px` : undefined, "--conn-color": conn.color }
+      : { "padding-left": depth > 0 ? `${depth * 14}px` : undefined }
+    return (
+      <div class="tree-group" data-open={openConnections()[conn.id] ? "true" : "false"}>
+        <button
+          class="tree-row db-row"
+          classList={{ "conn-colored": !!conn.color }}
+          style={style}
+          onClick={() => toggleConnection(conn)}
+          aria-expanded={openConnections()[conn.id] ? "true" : "false"}
+          onContextMenu={(event) => {
+            event.preventDefault()
+            setConnectionMenu({ x: event.clientX, y: event.clientY, conn })
+          }}
+        >
+          <ChevronRight size={13} class="chev" classList={{ open: openConnections()[conn.id] }} />
+          <Show when={icon} fallback={<Database size={15} />}>
+            <img class="conn-icon" src={icon} alt="" loading="lazy" />
+          </Show>
+          <span class="tree-name">{conn.name}</span>
+          <span class="row-end">
+            <Show when={stars().includes(conn.id)}>
+              <Star size={11} class="conn-star" />
+            </Show>
+            <span class="tag mono">{conn.db_type}</span>
+          </span>
+        </button>
+        <Show when={openConnections()[conn.id]}>
+          <div class="tree-children">
+            <Show when={!connectionData()[conn.id]?.loading} fallback={<div class="tree-hint">加载中…</div>}>
+              <Show when={databasesOf(conn).length > 0} fallback={<div class="tree-hint">连接失败</div>}>
+                <Show when={databasesOf(conn).length > 1} fallback={renderTables(conn, databasesOf(conn)[0], 20)}>
+                  <For each={databasesOf(conn)}>
+                    {(database) => (
+                      <div class="tree-group" data-open={openDatabases()[`${conn.id}|${database}`] ? "true" : "false"}>
+                        <button
+                          class="tree-row tree-db"
+                          onClick={() => toggleDatabase(conn, database)}
+                          aria-expanded={openDatabases()[`${conn.id}|${database}`] ? "true" : "false"}
+                        >
+                          <ChevronRight
+                            size={12}
+                            class="chev"
+                            classList={{ open: openDatabases()[`${conn.id}|${database}`] }}
+                          />
+                          <Database size={13} />
+                          <span class="tree-name">{database}</span>
+                        </button>
+                        <Show when={openDatabases()[`${conn.id}|${database}`]}>
+                          <div class="tree-children">{renderTables(conn, database, 34)}</div>
+                        </Show>
+                      </div>
+                    )}
+                  </For>
+                </Show>
+              </Show>
+            </Show>
+          </div>
+        </Show>
+      </div>
+    )
+  }
+
   return (
     <aside
       class="sidebar"
@@ -494,14 +773,6 @@ function Sidebar(props: SidebarProps) {
       </div>
 
       <nav class="side-nav">
-        <button class="side-nav-row" onClick={() => props.onToast("主页")}>
-          <LayoutGrid size={16} />
-          主页
-        </button>
-        <label class="side-nav-row side-search-row">
-          <Search size={16} />
-          <input placeholder="搜索连接和表" aria-label="搜索连接和表" />
-        </label>
         <button class="side-nav-row" onClick={props.onNewConnection}>
           <SquarePen size={16} />
           新建连接
@@ -515,67 +786,82 @@ function Sidebar(props: SidebarProps) {
             已连接
             <span>{connections().length}</span>
           </div>
-          <For each={connections()}>
-            {(conn) => (
-              <div class="tree-group" data-open={openConnections()[conn.id] ? "true" : "false"}>
+          <For each={folders()}>
+            {(folder) => (
+              <div class="tree-group" data-open={openFolders()[folder.id] ? "true" : "false"}>
                 <button
-                  class="tree-row db-row"
-                  onClick={() => toggleConnection(conn)}
-                  aria-expanded={openConnections()[conn.id] ? "true" : "false"}
+                  class="tree-row folder-row"
+                  onClick={() => toggleFolder(folder.id)}
+                  aria-expanded={openFolders()[folder.id] ? "true" : "false"}
                 >
-                  <ChevronRight size={13} class="chev" classList={{ open: openConnections()[conn.id] }} />
-                  <Database size={15} />
-                  <span class="tree-name">{conn.name}</span>
+                  <ChevronRight size={13} class="chev" classList={{ open: openFolders()[folder.id] }} />
+                  <Show when={openFolders()[folder.id]} fallback={<Folder size={15} />}>
+                    <FolderOpen size={15} />
+                  </Show>
+                  <span class="tree-name">{folder.name}</span>
                   <span class="row-end">
-                    <span class="tag mono">{conn.db_type}</span>
+                    <span class="tree-count">{folderConnections(folder).length}</span>
                   </span>
                 </button>
-                <Show when={openConnections()[conn.id]}>
+                <Show when={openFolders()[folder.id]}>
                   <div class="tree-children">
-                    <Show when={!connectionData()[conn.id]?.loading} fallback={<div class="tree-hint">加载中…</div>}>
-                      <Show when={databasesOf(conn).length > 0} fallback={<div class="tree-hint">连接失败</div>}>
-                        <Show
-                          when={databasesOf(conn).length > 1}
-                          fallback={renderTables(conn, databasesOf(conn)[0], 20)}
-                        >
-                          <For each={databasesOf(conn)}>
-                            {(database) => (
-                              <div
-                                class="tree-group"
-                                data-open={openDatabases()[`${conn.id}|${database}`] ? "true" : "false"}
-                              >
-                                <button
-                                  class="tree-row tree-db"
-                                  onClick={() => toggleDatabase(conn, database)}
-                                  aria-expanded={openDatabases()[`${conn.id}|${database}`] ? "true" : "false"}
-                                >
-                                  <ChevronRight
-                                    size={12}
-                                    class="chev"
-                                    classList={{ open: openDatabases()[`${conn.id}|${database}`] }}
-                                  />
-                                  <Database size={13} />
-                                  <span class="tree-name">{database}</span>
-                                </button>
-                                <Show when={openDatabases()[`${conn.id}|${database}`]}>
-                                  <div class="tree-children">{renderTables(conn, database, 34)}</div>
-                                </Show>
-                              </div>
-                            )}
-                          </For>
-                        </Show>
-                      </Show>
-                    </Show>
+                    <For each={folderConnections(folder)}>{(conn) => renderConnection(conn, 1)}</For>
                   </div>
                 </Show>
               </div>
             )}
           </For>
+          <For each={ungroupedConnections()}>{(conn) => renderConnection(conn, 0)}</For>
           <Show when={props.backendStatus === "online" && connections().length === 0}>
             <div class="tree-row leaf muted">暂无保存的连接</div>
           </Show>
         </div>
       </div>
+
+      <Show when={connectionMenu()}>
+        {(menu) => (
+          <ContextMenu
+            x={menu().x}
+            y={menu().y}
+            title={menu().conn.name}
+            items={connectionMenuItems(menu().conn)}
+            onClose={() => setConnectionMenu(null)}
+          />
+        )}
+      </Show>
+      <Show when={folderDialog()}>
+        <div class="palette-backdrop" onClick={(event) => event.target === event.currentTarget && setFolderDialog(null)}>
+          <div class="dialog dialog-narrow" role="dialog" aria-modal="true">
+            <header class="dialog-head">
+              <h2>{folderDialog()?.kind === "rename" ? "重命名文件夹" : "新建文件夹"}</h2>
+              <button class="icon-btn" aria-label="关闭" onClick={() => setFolderDialog(null)}>
+                <X size={15} />
+              </button>
+            </header>
+            <div class="dialog-body">
+              <label class="field">
+                <span>名称</span>
+                <input
+                  value={folderName()}
+                  autofocus
+                  onInput={(event) => setFolderName(event.currentTarget.value)}
+                  onKeyDown={(event) => event.key === "Enter" && saveFolder()}
+                />
+              </label>
+            </div>
+            <footer class="dialog-foot">
+              <div class="dialog-foot-right">
+                <button class="ghost-btn" onClick={() => setFolderDialog(null)}>
+                  取消
+                </button>
+                <button class="primary-btn" onClick={saveFolder}>
+                  确定
+                </button>
+              </div>
+            </footer>
+          </div>
+        </div>
+      </Show>
     </aside>
   )
 }
@@ -2343,6 +2629,7 @@ export default function App() {
           pendingId={pendingConnectionId()}
           onToggle={() => setSidebarCollapsed(true)}
           onNewConnection={() => setNewConnectionOpen(true)}
+          onNewQuery={openQuery}
           onToast={showToast}
           onMinimize={() => windowAction("minimize")}
           onMaximize={() => windowAction("maximize")}
