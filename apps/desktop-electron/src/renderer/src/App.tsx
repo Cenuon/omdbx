@@ -586,6 +586,8 @@ interface DataTableProps {
   rowStyle: RowStyle
   /** absent disables cell editing */
   onEdit?: (rowIndex: number, columnIndex: number, value: string) => void
+  /** staged edits keyed by `${rowIndex}|${columnIndex}` */
+  pending?: Record<string, string>
 }
 
 /** Row tint for the configured striping mode. */
@@ -667,33 +669,43 @@ function DataTable(props: DataTableProps) {
               >
                 <div class="td num">{rowIndex() + 1}</div>
                 <For each={row}>
-                  {(cell, cellIndex) => (
-                    <div
-                      class="td"
-                      classList={{ nullable: cell === null, editing: isEditing(rowIndex(), cellIndex()) }}
-                      title={props.onEdit ? "双击编辑" : cell === null ? "NULL" : String(cell)}
-                      onDblClick={() => beginEdit(rowIndex(), cellIndex(), cell)}
-                    >
-                      <Show when={isEditing(rowIndex(), cellIndex())} fallback={cell === null ? "NULL" : cell}>
-                        <input
-                          class="cell-editor"
-                          value={draft()}
-                          autofocus
-                          onInput={(event) => setDraft(event.currentTarget.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault()
-                              commitEdit()
-                            } else if (event.key === "Escape") {
-                              event.preventDefault()
-                              setEditing(null)
-                            }
-                          }}
-                          onBlur={commitEdit}
-                        />
-                      </Show>
-                    </div>
-                  )}
+                  {(cell, cellIndex) => {
+                    const staged = () => props.pending?.[`${rowIndex()}|${cellIndex()}`]
+                    return (
+                      <div
+                        class="td"
+                        classList={{
+                          nullable: cell === null,
+                          editing: isEditing(rowIndex(), cellIndex()),
+                          dirty: staged() !== undefined,
+                        }}
+                        title={props.onEdit ? "双击编辑" : cell === null ? "NULL" : String(cell)}
+                        onDblClick={() => beginEdit(rowIndex(), cellIndex(), staged() ?? cell)}
+                      >
+                        <Show
+                          when={isEditing(rowIndex(), cellIndex())}
+                          fallback={staged() ?? (cell === null ? "NULL" : cell)}
+                        >
+                          <input
+                            class="cell-editor"
+                            value={draft()}
+                            autofocus
+                            onInput={(event) => setDraft(event.currentTarget.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault()
+                                commitEdit()
+                              } else if (event.key === "Escape") {
+                                event.preventDefault()
+                                setEditing(null)
+                              }
+                            }}
+                            onBlur={commitEdit}
+                          />
+                        </Show>
+                      </div>
+                    )
+                  }}
                 </For>
               </div>
             )
@@ -750,6 +762,10 @@ interface TableViewProps {
   onExport: () => void
   rowStyle: RowStyle
   onEdit: (rowIndex: number, columnIndex: number, value: string) => void
+  pending: Record<string, string>
+  pendingCount: number
+  onSaveEdits: () => void
+  onCancelEdits: () => void
 }
 
 function TableView(props: TableViewProps) {
@@ -765,7 +781,16 @@ function TableView(props: TableViewProps) {
           </Show>
         </div>
         <div class="table-actions">
-          <span class="toolbar-sep" />
+          <Show when={props.pendingCount > 0}>
+            <span class="pending-note">{props.pendingCount} 处待保存</span>
+            <button class="ghost-btn" onClick={props.onCancelEdits}>
+              取消
+            </button>
+            <button class="primary-btn" onClick={props.onSaveEdits}>
+              保存
+            </button>
+            <span class="toolbar-sep" />
+          </Show>
           <button class="icon-btn" aria-label="刷新" title="刷新" onClick={props.onRefresh}>
             <RefreshCw size={16} />
           </button>
@@ -793,6 +818,7 @@ function TableView(props: TableViewProps) {
             emptyMessage={props.tableName ? "表里还没有数据" : "在左侧选择一张表"}
             rowStyle={props.rowStyle}
             onEdit={props.onEdit}
+            pending={props.pending}
           />
         </Show>
       </Show>
@@ -1364,6 +1390,7 @@ export default function App() {
     error: string | null
   }>({ loading: false, columns: [], rows: [], rowCount: 0, elapsedMs: 0, error: null })
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null)
+  const [pendingEdits, setPendingEdits] = createSignal<Record<string, string>>({})
   const [querySql, setQuerySql] = createSignal("")
   const [queryState, setQueryState] = createSignal<{
     running: boolean
@@ -1469,6 +1496,7 @@ export default function App() {
       list.some((tab) => tab.id === key) ? list : [...list, { id: key, title: table, kind: "table", sub: schema }],
     )
     setActiveTab(key)
+    setPendingEdits({})
     setBrowse((state) => ({ ...state, loading: true, error: null }))
     try {
       const { result, columns, sql } = await browseTable(connection, database, schema, table)
@@ -1508,13 +1536,36 @@ export default function App() {
     return text
   }
 
-  async function editCell(rowIndex: number, columnIndex: number, value: string) {
-    const target = activeTarget()
-    const column = browse().columns[columnIndex]
-    if (!target || !column) return
+  function stageEdit(rowIndex: number, columnIndex: number, value: string) {
     const original = browse().rows[rowIndex]?.[columnIndex] ?? null
-    const next = parseCellValue(original, value)
-    if (next === original) return
+    const key = `${rowIndex}|${columnIndex}`
+    setPendingEdits((state) => {
+      const next = { ...state }
+      if (parseCellValue(original, value) === original) delete next[key]
+      else next[key] = value
+      return next
+    })
+  }
+
+  function cancelEdits() {
+    setPendingEdits({})
+    showToast("已放弃修改")
+  }
+
+  async function saveEdits() {
+    const target = activeTarget()
+    const edits = pendingEdits()
+    const keys = Object.keys(edits)
+    if (!target || keys.length === 0) return
+    const dirtyRows = keys.map((key) => {
+      const [row, column] = key.split("|").map(Number)
+      const original = browse().rows[row]?.[column] ?? null
+      const entry: [number, Array<[number, string | number | null]>] = [
+        row,
+        [[column, parseCellValue(original, edits[key])]],
+      ]
+      return entry
+    })
     try {
       const preparation = await prepareDataGridSave({
         databaseType: target.connection.db_type,
@@ -1528,7 +1579,7 @@ export default function App() {
         },
         columns: browse().columns.map((item) => item.name),
         rows: browse().rows,
-        dirtyRows: [[rowIndex, [[columnIndex, next]]]],
+        dirtyRows,
       })
       if (preparation.validationError) throw new Error(preparation.validationError)
       if (preparation.keylessGuards?.length) throw new Error("这张表没有主键，暂不支持在表格里直接编辑")
@@ -1540,10 +1591,11 @@ export default function App() {
           preparation.executionSchema ?? target.schema,
         )
       }
-      showToast(`已更新 ${column.name}`)
+      setPendingEdits({})
+      showToast(`已保存 ${keys.length} 处修改`)
       await openTable(target.connection, target.database, target.schema, target.table)
     } catch (error) {
-      showToast(`更新失败：${error instanceof Error ? error.message : String(error)}`)
+      showToast(`保存失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -1711,7 +1763,11 @@ export default function App() {
                         onRefresh={() => void refreshTable()}
                         onExport={() => showToast("导出结果 · CSV")}
                         rowStyle={rowStyle()}
-                        onEdit={(rowIndex, columnIndex, value) => void editCell(rowIndex, columnIndex, value)}
+                        onEdit={stageEdit}
+                        pending={pendingEdits()}
+                        pendingCount={Object.keys(pendingEdits()).length}
+                        onSaveEdits={() => void saveEdits()}
+                        onCancelEdits={cancelEdits}
                       />
                     }
                   >

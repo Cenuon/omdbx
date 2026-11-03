@@ -4090,3 +4090,25 @@ html[data-grid-font="ui"] {
   font: inherit;
   box-shadow: inset 0 0 0 2px var(--accent);
 }
+
+/* ---------- staged cell edits ---------- */
+:root {
+  --cell-dirty: rgba(233, 176, 26, 0.22);
+  --cell-dirty-hover: rgba(233, 176, 26, 0.3);
+}
+html[data-theme="dark"] {
+  --cell-dirty: rgba(240, 190, 60, 0.18);
+  --cell-dirty-hover: rgba(240, 190, 60, 0.26);
+}
+.td.dirty {
+  background: var(--cell-dirty);
+  color: var(--ink);
+}
+.td.dirty:hover {
+  background: var(--cell-dirty-hover);
+}
+.pending-note {
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
