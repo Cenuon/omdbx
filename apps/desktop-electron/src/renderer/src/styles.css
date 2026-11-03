@@ -3536,3 +3536,10 @@ html[data-theme="dark"] {
 .tree-children {
   position: relative;
 }
+
+/* keep the window chrome on one baseline: the sidebar header icons line up with the titlebar icons */
+.side-top {
+  height: 44px;
+  flex: 0 0 44px;
+  padding: 0 8px 0 12px;
+}
