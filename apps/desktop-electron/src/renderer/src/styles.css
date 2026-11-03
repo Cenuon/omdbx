@@ -4637,3 +4637,12 @@ html[data-theme="dark"] .dialog {
   font-weight: 400;
   color: var(--ink);
 }
+
+/* connection + folder icons share one 20px slot: the type logo reads clearly
+   and the two top-level rows keep their names lined up */
+.sidebar .tree-row > .conn-icon,
+.sidebar .tree-row.folder-row > svg:not(.chev) {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+}
