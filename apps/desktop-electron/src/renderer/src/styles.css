@@ -4027,3 +4027,13 @@ html[data-theme="dark"] {
 .grid-row {
   border-bottom-color: color-mix(in srgb, var(--ink) 6%, transparent);
 }
+
+/* barely-there striping */
+:root {
+  --row-stripe-a: rgba(0, 0, 0, 0.018);
+  --row-stripe-b: rgba(56, 116, 226, 0.055);
+}
+html[data-theme="dark"] {
+  --row-stripe-a: rgba(255, 255, 255, 0.022);
+  --row-stripe-b: rgba(96, 156, 255, 0.075);
+}
