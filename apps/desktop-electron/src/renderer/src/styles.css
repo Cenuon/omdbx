@@ -3933,3 +3933,16 @@ html[data-theme="dark"] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* header labels read as labels: bigger and heavier than the type line under them */
+.th {
+  height: 34px;
+}
+.th-name {
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.th-type {
+  font-size: 10px;
+}
