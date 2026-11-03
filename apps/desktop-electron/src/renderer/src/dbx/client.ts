@@ -125,16 +125,35 @@ export function executeQuery(
   })
 }
 
+export function getIdentifierQuote(connectionId: string, database?: string): Promise<string | null> {
+  return request<string | null>("/api/connection/identifier-quote", {
+    method: "POST",
+    body: JSON.stringify({ connectionId, database: database || null }),
+  })
+}
+
+/**
+ * The backend only reports the quote for a few drivers, so fall back to the
+ * dialect convention: backticks for MySQL, brackets for SQL Server, quotes elsewhere.
+ */
+function quoteIdentifier(dbType: string, remote: string | null, name: string): string {
+  if (dbType === "sqlserver") return `[${name.replace(/]/g, "]]")}]`
+  const quote = remote ?? (dbType === "mysql" ? "`" : '"')
+  return `${quote}${name.split(quote).join(quote + quote)}${quote}`
+}
+
 export async function browseTable(
-  connectionId: string,
+  connection: DbxConnection,
   database: string,
   schema: string,
   table: string,
-): Promise<{ result: DbxQueryResult; columns: DbxColumn[] }> {
-  const quoted = `"${table.replace(/"/g, '""')}"`
+): Promise<{ result: DbxQueryResult; columns: DbxColumn[]; sql: string }> {
+  const remote = await getIdentifierQuote(connection.id, database).catch(() => null)
+  const quoted = quoteIdentifier(connection.db_type, remote, table)
+  const sql = `SELECT * FROM ${quoted} LIMIT 500`
   const [result, columns] = await Promise.all([
-    executeQuery(connectionId, database, `SELECT * FROM ${quoted} LIMIT 500`, schema),
-    getColumns(connectionId, database, schema, table).catch(() => [] as DbxColumn[]),
+    executeQuery(connection.id, database, sql, schema),
+    getColumns(connection.id, database, schema, table).catch(() => [] as DbxColumn[]),
   ])
-  return { result, columns }
+  return { result, columns, sql }
 }

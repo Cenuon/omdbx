@@ -3905,3 +3905,20 @@ html[data-theme="dark"] {
   color: var(--ink);
   font-weight: 550;
 }
+
+/* database level of the tree (only shown when a connection has several) */
+.sidebar .tree-row.tree-db {
+  height: 27px;
+  gap: 6px;
+  padding-left: 20px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.sidebar .tree-row.tree-db > svg:not(.chev) {
+  color: var(--faint);
+}
+.tree-children .tree-children::before {
+  left: 26px;
+  top: 0;
+  bottom: 4px;
+}

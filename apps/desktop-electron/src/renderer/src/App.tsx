@@ -271,15 +271,31 @@ interface SidebarProps {
   onOpenTable: (connection: DbxConnection, database: string, schema: string, table: string) => void
 }
 
+/** Catalog schemas that only get in the way of browsing real data. */
+const SYSTEM_DATABASES = new Set([
+  "information_schema",
+  "performance_schema",
+  "pg_catalog",
+  "pg_toast",
+  "mysql",
+  "sys",
+])
+
+function isSystemDatabase(name: string): boolean {
+  const lower = name.toLowerCase()
+  return SYSTEM_DATABASES.has(lower) || lower.startsWith("pg_temp")
+}
+
 function Sidebar(props: SidebarProps) {
   const [connections, setConnections] = createSignal<DbxConnection[]>([])
   const [openConnections, setOpenConnections] = createSignal<Record<string, boolean>>({})
   const [connectionData, setConnectionData] = createSignal<
     Record<
       string,
-      { databases: Array<{ name: string }>; schemas: string[]; tables: Record<string, string[]>; loading: boolean }
+      { databases: string[]; tables: Record<string, string[]>; loaded: Record<string, boolean>; loading: boolean }
     >
   >({})
+  const [openDatabases, setOpenDatabases] = createSignal<Record<string, boolean>>({})
   const [activeKey, setActiveKey] = createSignal("")
 
   async function refreshConnections(): Promise<DbxConnection[]> {
@@ -325,32 +341,44 @@ function Sidebar(props: SidebarProps) {
 
   async function loadConnection(conn: DbxConnection) {
     const id = conn.id
-    setConnectionData((data) => ({ ...data, [id]: { databases: [], schemas: [], tables: {}, loading: true } }))
+    setConnectionData((data) => ({ ...data, [id]: { databases: [], tables: {}, loaded: {}, loading: true } }))
     try {
       await connectDb(conn)
-      const databases = await getDatabases(id)
-      const info = { databases, schemas: [] as string[], tables: {} as Record<string, string[]>, loading: false }
-      setConnectionData((data) => ({ ...data, [id]: info }))
-      const database = conn.database || databases[0]?.name
-      if (database) {
-        const schemas = await getSchemas(id, database).catch(() => [] as string[])
-        const schema = conn.default_schema || schemas[0] || "main"
-        const tables = await getTables(id, database, schema).catch(() => [])
-        setConnectionData((data) => ({
-          ...data,
-          [id]: {
-            databases,
-            schemas,
-            loading: false,
-            tables: { [`${database}|${schema}`]: tables.map((table) => table.name) },
-          },
-        }))
-      }
+      const list = await getDatabases(id)
+      const databases = list.map((item) => item.name)
+      setConnectionData((data) => ({ ...data, [id]: { databases, tables: {}, loaded: {}, loading: false } }))
+      // a connection with a single user database can open it straight away
+      const user = databases.filter((name) => !isSystemDatabase(name))
+      const only = conn.database || (user.length === 1 ? user[0] : "")
+      if (only) await loadTables(conn, only)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       props.onToast(`${conn.name}: ${message}`)
-      setConnectionData((data) => ({ ...data, [id]: { databases: [], schemas: [], tables: {}, loading: false } }))
+      setConnectionData((data) => ({ ...data, [id]: { databases: [], tables: {}, loaded: {}, loading: false } }))
     }
+  }
+
+  async function loadTables(conn: DbxConnection, database: string) {
+    if (connectionData()[conn.id]?.loaded[database]) return
+    setConnectionData((data) => {
+      const current = data[conn.id]
+      if (!current) return data
+      return { ...data, [conn.id]: { ...current, loaded: { ...current.loaded, [database]: true } } }
+    })
+    const schemas = await getSchemas(conn.id, database).catch(() => [] as string[])
+    const schema = conn.default_schema || schemas[0] || database
+    const tables = await getTables(conn.id, database, schema).catch(() => [])
+    setConnectionData((data) => {
+      const current = data[conn.id]
+      if (!current) return data
+      return {
+        ...data,
+        [conn.id]: {
+          ...current,
+          tables: { ...current.tables, [`${database}|${schema}`]: tables.map((table) => table.name) },
+        },
+      }
+    })
   }
 
   function toggleConnection(conn: DbxConnection) {
@@ -359,22 +387,74 @@ function Sidebar(props: SidebarProps) {
     if (next && !connectionData()[conn.id]) void loadConnection(conn)
   }
 
-  function connectionTables(conn: DbxConnection, database: string, schema: string): string[] {
-    return connectionData()[conn.id]?.tables[`${database}|${schema}`] ?? []
+  function toggleDatabase(conn: DbxConnection, database: string) {
+    const key = `${conn.id}|${database}`
+    const next = !openDatabases()[key]
+    setOpenDatabases((state) => ({ ...state, [key]: next }))
+    if (next) void loadTables(conn, database)
   }
 
-  function currentDatabase(conn: DbxConnection): string {
-    return conn.database || connectionData()[conn.id]?.databases[0]?.name || "main"
+  /** Databases worth showing: system catalogs only when nothing else exists. */
+  function databasesOf(conn: DbxConnection): string[] {
+    const all = connectionData()[conn.id]?.databases ?? []
+    const user = all.filter((name) => !isSystemDatabase(name))
+    return user.length > 0 ? user : all
   }
 
-  function currentSchema(conn: DbxConnection): string {
-    return conn.default_schema || "main"
+  function tablesOf(conn: DbxConnection, database: string): Array<{ schema: string; table: string }> {
+    const rows: Array<{ schema: string; table: string }> = []
+    for (const [key, names] of Object.entries(connectionData()[conn.id]?.tables ?? {})) {
+      const separator = key.indexOf("|")
+      if (key.slice(0, separator) !== database) continue
+      const schema = key.slice(separator + 1)
+      for (const table of names) rows.push({ schema, table })
+    }
+    return rows
   }
 
-  // the database/schema row only carries information when there is more than one of them
-  function showPath(conn: DbxConnection): boolean {
-    const data = connectionData()[conn.id]
-    return (data?.databases.length ?? 0) > 1 || (data?.schemas.length ?? 0) > 1
+  function tablesLoaded(conn: DbxConnection, database: string): boolean {
+    return Object.keys(connectionData()[conn.id]?.tables ?? {}).some((key) => key.startsWith(`${database}|`))
+  }
+
+  function openTable(conn: DbxConnection, database: string, schema: string, table: string) {
+    setActiveKey(`${conn.id}|${database}|${schema}|${table}`)
+    props.onOpenTable(conn, database, schema, table)
+  }
+
+  function renderTables(conn: DbxConnection, database: string, indent: number) {
+    return (
+      <Show
+        when={tablesLoaded(conn, database)}
+        fallback={
+          <div class="tree-hint" style={{ "padding-left": `${indent}px` }}>
+            加载中…
+          </div>
+        }
+      >
+        <Show
+          when={tablesOf(conn, database).length > 0}
+          fallback={
+            <div class="tree-hint" style={{ "padding-left": `${indent}px` }}>
+              没有表
+            </div>
+          }
+        >
+          <For each={tablesOf(conn, database)}>
+            {(row) => (
+              <button
+                class="tree-row leaf tree-table"
+                classList={{ active: activeKey() === `${conn.id}|${database}|${row.schema}|${row.table}` }}
+                style={{ "padding-left": `${indent}px` }}
+                onClick={() => openTable(conn, database, row.schema, row.table)}
+              >
+                <Table2 size={12} />
+                <span class="tree-name">{row.table}</span>
+              </button>
+            )}
+          </For>
+        </Show>
+      </Show>
+    )
   }
 
   return (
@@ -438,46 +518,35 @@ function Sidebar(props: SidebarProps) {
                 <Show when={openConnections()[conn.id]}>
                   <div class="tree-children">
                     <Show when={!connectionData()[conn.id]?.loading} fallback={<div class="tree-hint">加载中…</div>}>
-                      <Show
-                        when={(connectionData()[conn.id]?.databases.length ?? 0) > 0}
-                        fallback={<div class="tree-hint">连接失败</div>}
-                      >
-                        <Show when={showPath(conn)}>
-                          <div class="tree-row tree-path" style={{ "padding-left": "20px" }}>
-                            <span class="tree-name">
-                              {currentDatabase(conn)} · {currentSchema(conn)}
-                            </span>
-                            <span class="tree-count">
-                              {connectionTables(conn, currentDatabase(conn), currentSchema(conn)).length}
-                            </span>
-                          </div>
-                        </Show>
+                      <Show when={databasesOf(conn).length > 0} fallback={<div class="tree-hint">连接失败</div>}>
                         <Show
-                          when={connectionTables(conn, currentDatabase(conn), currentSchema(conn)).length > 0}
-                          fallback={
-                            <div class="tree-hint" style={{ "padding-left": "20px" }}>
-                              没有表
-                            </div>
-                          }
+                          when={databasesOf(conn).length > 1}
+                          fallback={renderTables(conn, databasesOf(conn)[0], 20)}
                         >
-                          <For each={connectionTables(conn, currentDatabase(conn), currentSchema(conn))}>
-                            {(table) => {
-                              const key = `${conn.id}|${currentDatabase(conn)}|${currentSchema(conn)}|${table}`
-                              return (
+                          <For each={databasesOf(conn)}>
+                            {(database) => (
+                              <div
+                                class="tree-group"
+                                data-open={openDatabases()[`${conn.id}|${database}`] ? "true" : "false"}
+                              >
                                 <button
-                                  class="tree-row leaf tree-table"
-                                  classList={{ active: activeKey() === key }}
-                                  style={{ "padding-left": "20px" }}
-                                  onClick={() => {
-                                    setActiveKey(key)
-                                    props.onOpenTable(conn, currentDatabase(conn), currentSchema(conn), table)
-                                  }}
+                                  class="tree-row tree-db"
+                                  onClick={() => toggleDatabase(conn, database)}
+                                  aria-expanded={openDatabases()[`${conn.id}|${database}`] ? "true" : "false"}
                                 >
-                                  <Table2 size={12} />
-                                  <span class="tree-name">{table}</span>
+                                  <ChevronRight
+                                    size={12}
+                                    class="chev"
+                                    classList={{ open: openDatabases()[`${conn.id}|${database}`] }}
+                                  />
+                                  <Database size={13} />
+                                  <span class="tree-name">{database}</span>
                                 </button>
-                              )
-                            }}
+                                <Show when={openDatabases()[`${conn.id}|${database}`]}>
+                                  <div class="tree-children">{renderTables(conn, database, 34)}</div>
+                                </Show>
+                              </div>
+                            )}
                           </For>
                         </Show>
                       </Show>
@@ -1303,10 +1372,10 @@ export default function App() {
       list.some((tab) => tab.id === key) ? list : [...list, { id: key, title: table, kind: "table", sub: schema }],
     )
     setActiveTab(key)
-    setQuerySql(`SELECT * FROM "${table.replace(/"/g, '""')}" LIMIT 100;`)
     setBrowse((state) => ({ ...state, loading: true, error: null }))
     try {
-      const { result, columns } = await browseTable(connection.id, database, schema, table)
+      const { result, columns, sql } = await browseTable(connection, database, schema, table)
+      setQuerySql(`${sql};`)
       setBrowse({
         loading: false,
         columns: columns.map((column) => ({
