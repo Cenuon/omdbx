@@ -4037,3 +4037,13 @@ html[data-theme="dark"] {
   --row-stripe-a: rgba(255, 255, 255, 0.022);
   --row-stripe-b: rgba(96, 156, 255, 0.075);
 }
+
+/* selection is a background tint only, no outline */
+.grid.rows-triple .grid-row.selected,
+.grid.rows-zebra .grid-row.selected,
+.grid .grid-row.selected {
+  box-shadow: none;
+}
+.grid-row.selected::before {
+  display: none;
+}
