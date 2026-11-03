@@ -4694,3 +4694,18 @@ html[data-theme="dark"] .dialog {
   overflow: visible;
   text-overflow: clip;
 }
+
+/* section header: same icon + text treatment as the nav rows above it */
+.sidebar .tree-label {
+  height: 32px;
+  padding: 0 6px;
+  gap: 7px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: normal;
+}
+.sidebar .tree-label svg {
+  color: var(--muted);
+}

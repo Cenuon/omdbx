@@ -897,9 +897,8 @@ function Sidebar(props: SidebarProps) {
       >
         <div class="tree-section">
           <div class="tree-label">
-            <ChevronDown size={12} />
+            <Database size={16} />
             我的连接
-            <span>{matchedCount()}</span>
           </div>
           <For each={visibleFolders()}>
             {(folder) => (
