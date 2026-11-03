@@ -29,6 +29,8 @@ export function compareVersions(current: string, latest: string): UpdateLevel | 
 
 /** Asks GitHub for the newest published release; null when offline or up to date. */
 export async function checkForUpdate(): Promise<UpdateInfo | null> {
+  // an uninjected version would make every release look newer
+  if (APP_VERSION === "0.0.0") return null
   try {
     const response = await fetch(RELEASES_API, { headers: { Accept: "application/vnd.github+json" } })
     if (!response.ok) return null

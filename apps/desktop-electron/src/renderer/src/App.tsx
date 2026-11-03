@@ -140,7 +140,6 @@ function Titlebar(props: {
   onNewQuery: () => void
   onTheme: () => void
   onSettings: () => void
-  onCommand: () => void
   onMinimize: () => void
   onMaximize: () => void
   onClose: () => void
@@ -237,9 +236,6 @@ function Titlebar(props: {
             </button>
           )}
         </Show>
-        <button class="titlebar-toggle" aria-label="命令面板" title="命令面板 ⌘K" onClick={props.onCommand}>
-          <Search size={16} />
-        </button>
         <button class="titlebar-toggle" aria-label="切换主题" title="切换主题" onClick={props.onTheme}>
           <Show when={props.theme === "light"} fallback={<Sun size={16} />}>
             <Moon size={16} />
@@ -1852,104 +1848,6 @@ function RightPanel(props: {
   )
 }
 
-function CommandPalette(props: {
-  onClose: () => void
-  onCommand: (id: string) => void
-  onToast: (message: string) => void
-}) {
-  const commands = [
-    { id: "new-query", label: "新建查询", hint: "⌘N", icon: <Plus size={14} /> },
-    { id: "new-connection", label: "新建连接", hint: "⌘⇧N", icon: <Database size={14} /> },
-    { id: "format", label: "格式化当前 SQL", hint: "⌘⇧F", icon: <WandSparkles size={14} /> },
-    { id: "toggle-theme", label: "切换主题", hint: "⌘⇧L", icon: <Moon size={14} /> },
-    { id: "settings", label: "打开设置", hint: "⌘,", icon: <Settings size={14} /> },
-  ]
-  const [query, setQuery] = createSignal("")
-  const [index, setIndex] = createSignal(0)
-  let input!: HTMLInputElement
-
-  const filtered = createMemo(() => {
-    const q = query().toLowerCase().trim()
-    if (!q) return commands
-    return commands.filter((item) => item.label.toLowerCase().includes(q))
-  })
-
-  createEffect(() => {
-    query()
-    setIndex(0)
-  })
-
-  onMount(() => input?.focus())
-
-  function run(id: string) {
-    props.onCommand(id)
-    props.onClose()
-  }
-
-  function onKey(event: KeyboardEvent) {
-    if (event.key === "ArrowDown") {
-      event.preventDefault()
-      setIndex((value) => (value + 1) % Math.max(filtered().length, 1))
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault()
-      setIndex((value) => (value - 1 + filtered().length) % Math.max(filtered().length, 1))
-    } else if (event.key === "Enter") {
-      event.preventDefault()
-      const item = filtered()[index()]
-      if (item) run(item.id)
-    } else if (event.key === "Escape") {
-      event.preventDefault()
-      props.onClose()
-    }
-  }
-
-  return (
-    <div class="palette-backdrop" onClick={(event) => event.target === event.currentTarget && props.onClose()}>
-      <div class="palette" role="dialog" aria-modal="true" aria-label="命令面板">
-        <div class="palette-input">
-          <Search size={16} />
-          <input
-            ref={input}
-            value={query()}
-            onInput={(event) => setQuery(event.currentTarget.value)}
-            onKeyDown={onKey}
-            placeholder="搜索表、连接或命令"
-            autocomplete="off"
-          />
-          <kbd>Esc</kbd>
-        </div>
-        <div class="palette-list">
-          <div class="palette-group">命令</div>
-          <For each={filtered()}>
-            {(item, i) => (
-              <button class="palette-item" classList={{ active: i() === index() }} onMouseEnter={() => setIndex(i())} onClick={() => run(item.id)}>
-                {item.icon}
-                {item.label}
-                <kbd>{item.hint}</kbd>
-              </button>
-            )}
-          </For>
-          <Show when={filtered().length === 0}>
-            <div class="palette-empty">没有找到匹配命令</div>
-          </Show>
-        </div>
-        <div class="palette-foot">
-          <span>
-            <kbd>↑</kbd>
-            <kbd>↓</kbd> 选择
-          </span>
-          <span>
-            <kbd>↵</kbd> 打开
-          </span>
-          <span>
-            <kbd>Esc</kbd> 关闭
-          </span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function Toast(props: { message: string | null }) {
   return (
     <Show when={props.message}>
@@ -2030,7 +1928,6 @@ export default function App() {
   const [tabs, setTabs] = createSignal<TabItem[]>([])
   const [activeTab, setActiveTab] = createSignal("")
   const [selectedId, setSelectedId] = createSignal(3)
-  const [commandOpen, setCommandOpen] = createSignal(false)
   const [newConnectionOpen, setNewConnectionOpen] = createSignal(false)
   const [connectionReload, setConnectionReload] = createSignal(0)
   const [pendingConnectionId, setPendingConnectionId] = createSignal<string | null>(null)
@@ -2755,15 +2652,6 @@ export default function App() {
     window.api?.onMaximized(setMaximized)
     const onKey = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey
-      if (mod && event.key.toLowerCase() === "k") {
-        event.preventDefault()
-        setCommandOpen((open) => !open)
-        return
-      }
-      if (event.key === "Escape") {
-        setCommandOpen(false)
-        return
-      }
       if (mod && event.key === "Enter") {
         event.preventDefault()
         showToast("查询已执行 · 38 行 · 6 ms")
@@ -2782,14 +2670,6 @@ export default function App() {
     window.addEventListener("keydown", onKey)
     onCleanup(() => window.removeEventListener("keydown", onKey))
   })
-
-  function handleCommand(id: string) {
-    if (id === "new-query") openQuery()
-    else if (id === "new-connection") setNewConnectionOpen(true)
-    else if (id === "format") showToast("SQL 已格式化")
-    else if (id === "toggle-theme") toggleTheme()
-    else if (id === "settings") setSettingsOpen(true)
-  }
 
   return (
     <div class="app" classList={{ "sidebar-collapsed": sidebarCollapsed(), "right-collapsed": rightCollapsed() }}>
@@ -2840,7 +2720,6 @@ export default function App() {
           onNewQuery={openQuery}
           onTheme={toggleTheme}
           onSettings={() => setSettingsOpen((value) => !value)}
-          onCommand={() => setCommandOpen(true)}
           onMinimize={() => windowAction("minimize")}
           onMaximize={() => windowAction("maximize")}
           onClose={() => windowAction("close")}
@@ -2935,9 +2814,6 @@ export default function App() {
           </Show>
         </div>
       </div>
-      <Show when={commandOpen()}>
-        <CommandPalette onClose={() => setCommandOpen(false)} onCommand={handleCommand} onToast={showToast} />
-      </Show>
       <Show when={newConnectionOpen()}>
         <NewConnectionDialog
           onClose={() => setNewConnectionOpen(false)}
