@@ -640,10 +640,11 @@ interface DataTableProps {
   /** marks rows staged for insertion */
   newRowFlags?: boolean[]
   onRowMenu?: (rowIndex: number, x: number, y: number) => void
+  onCellMenu?: (rowIndex: number, columnIndex: number, x: number, y: number) => void
   /** absent disables cell editing */
   onEdit?: (rowIndex: number, columnIndex: number, value: string) => void
   /** staged edits keyed by `${rowIndex}|${columnIndex}` */
-  pending?: Record<string, string>
+  pending?: Record<string, string | number | null>
 }
 
 /** Row tint for the configured striping mode. */
@@ -781,23 +782,31 @@ function DataTable(props: DataTableProps) {
                     const cellIndex = () => column.index
                     const cell = () => row[cellIndex()]
                     const staged = () => props.pending?.[`${rowIndex()}|${cellIndex()}`]
+                    const hasStaged = () => staged() !== undefined
+                    const display = () => {
+                      const value = hasStaged() ? staged() : cell()
+                      return value === null || value === undefined ? "NULL" : String(value)
+                    }
                     return (
                       <div
                         class="td"
                         classList={{
-                          nullable: cell() === null,
+                          nullable: !hasStaged() && cell() === null,
                           editing: isEditing(rowIndex(), cellIndex()),
-                          dirty: staged() !== undefined,
+                          dirty: hasStaged(),
                           frozen: position() < frozen(),
                         }}
                         style={position() < frozen() ? `left: ${frozenOffsets()[position()]}px` : undefined}
-                        title={props.onEdit ? "双击编辑" : cell() === null ? "NULL" : String(cell())}
-                        onDblClick={() => beginEdit(rowIndex(), cellIndex(), staged() ?? cell())}
+                        title={props.onEdit ? "双击编辑" : display()}
+                        onDblClick={() => beginEdit(rowIndex(), cellIndex(), hasStaged() ? staged() : cell())}
+                        onContextMenu={(event) => {
+                          if (!props.onCellMenu) return
+                          event.preventDefault()
+                          event.stopPropagation()
+                          props.onCellMenu(rowIndex(), cellIndex(), event.clientX, event.clientY)
+                        }}
                       >
-                        <Show
-                          when={isEditing(rowIndex(), cellIndex())}
-                          fallback={staged() ?? (cell() === null ? "NULL" : cell())}
-                        >
+                        <Show when={isEditing(rowIndex(), cellIndex())} fallback={display()}>
                           <input
                             class="cell-editor"
                             value={draft()}
@@ -877,8 +886,9 @@ interface TableViewProps {
   view: ColumnViewState
   onColumnMenu: (index: number, x: number, y: number) => void
   onRowMenu: (index: number, x: number, y: number) => void
+  onCellMenu: (rowIndex: number, columnIndex: number, x: number, y: number) => void
   rows: Array<{ index: number; values: Array<string | number | boolean | null>; isNew: boolean }>
-  pending: Record<string, string>
+  pending: Record<string, string | number | null>
   pendingCount: number
   onSaveEdits: () => void
   onCancelEdits: () => void
@@ -941,6 +951,7 @@ function TableView(props: TableViewProps) {
             rowIndexes={props.rows.map((row) => row.index)}
             newRowFlags={props.rows.map((row) => row.isNew)}
             onRowMenu={props.onRowMenu}
+            onCellMenu={props.onCellMenu}
           />
         </Show>
       </Show>
@@ -1513,7 +1524,7 @@ export default function App() {
     quote: string
   }>({ loading: false, columns: [], rows: [], rowCount: 0, elapsedMs: 0, error: null, quote: '"' })
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null)
-  const [pendingEdits, setPendingEdits] = createSignal<Record<string, string>>({})
+  const [pendingEdits, setPendingEdits] = createSignal<Record<string, string | number | null>>({})
   const [columnViews, setColumnViews] = createSignal<Record<string, ColumnViewState>>({})
   const [columnMenu, setColumnMenu] = createSignal<{ x: number; y: number; index: number } | null>(null)
   const [columnDialog, setColumnDialog] = createSignal<{ kind: "hide" | "width" | "allWidth" | "rowHeight"; index: number } | null>(
@@ -1521,6 +1532,7 @@ export default function App() {
   )
   const [dialogValue, setDialogValue] = createSignal("")
   const [rowMenu, setRowMenu] = createSignal<{ x: number; y: number; index: number } | null>(null)
+  const [cellMenu, setCellMenu] = createSignal<{ x: number; y: number; row: number; column: number } | null>(null)
   /** rows staged for insertion; each cell holds the raw text */
   const [newRows, setNewRows] = createSignal<Array<Array<string | null>>>([])
   /** indexes into browse().rows staged for deletion */
@@ -1686,12 +1698,13 @@ export default function App() {
     return model
   })
 
-  function stageEdit(rowIndex: number, columnIndex: number, value: string) {
+  function stageEdit(rowIndex: number, columnIndex: number, value: string | number | null) {
     const realCount = browse().rows.length
     if (rowIndex >= realCount) {
       const position = rowIndex - realCount
+      const raw = value === null ? null : String(value)
       setNewRows((rows) =>
-        rows.map((row, index) => (index === position ? row.map((cell, column) => (column === columnIndex ? value : cell)) : row)),
+        rows.map((row, index) => (index === position ? row.map((cell, column) => (column === columnIndex ? raw : cell)) : row)),
       )
       return
     }
@@ -1699,10 +1712,16 @@ export default function App() {
     const key = `${rowIndex}|${columnIndex}`
     setPendingEdits((state) => {
       const next = { ...state }
-      if (parseCellValue(original, value) === original) delete next[key]
+      if (value === original) delete next[key]
       else next[key] = value
       return next
     })
+  }
+
+  /** From the inline editor: empty text becomes NULL unless the cell was already empty. */
+  function stageText(rowIndex: number, columnIndex: number, text: string) {
+    const original = browse().rows[rowIndex]?.[columnIndex] ?? null
+    stageEdit(rowIndex, columnIndex, parseCellValue(original, text))
   }
 
   function cancelEdits() {
@@ -1719,11 +1738,7 @@ export default function App() {
     if (!target || (keys.length === 0 && added.length === 0 && removed.length === 0)) return
     const dirtyRows = keys.map((key) => {
       const [row, column] = key.split("|").map(Number)
-      const original = browse().rows[row]?.[column] ?? null
-      const entry: [number, Array<[number, string | number | null]>] = [
-        row,
-        [[column, parseCellValue(original, edits[key])]],
-      ]
+      const entry: [number, Array<[number, string | number | null]>] = [row, [[column, edits[key]]]]
       return entry
     })
     try {
@@ -1847,8 +1862,7 @@ export default function App() {
         if (lines[row] === "") continue
         next[`${row}|${index}`] = lines[row]
         applied += 1
-      }
-      setPendingEdits(next)
+      }      setPendingEdits(next)
       showToast(applied > 0 ? `已粘贴 ${applied} 个值，记得保存` : "没有可粘贴的行")
     } catch {
       showToast("读取剪贴板失败")
@@ -2083,10 +2097,92 @@ export default function App() {
       } else {
         const next = { ...pendingEdits() }
         cells.forEach((cell, column) => {
-          if (column < browse().columns.length) next[`${rowIndex}|${column}`] = cell
+          if (column < browse().columns.length) {
+            const original = browse().rows[rowIndex]?.[column] ?? null
+            next[`${rowIndex}|${column}`] = parseCellValue(original, cell)
+          }
         })
         setPendingEdits(next)
       }
+      showToast("已粘贴，记得保存")
+    } catch {
+      showToast("读取剪贴板失败")
+    }
+  }
+
+  function cellMenuItems(rowIndex: number, columnIndex: number): MenuItem[] {
+    const target = activeTarget()
+    const columns = browse().columns
+    const column = columns[columnIndex]
+    const realCount = browse().rows.length
+    const isNew = rowIndex >= realCount
+    if (!target || !column) return []
+    const values = isNew ? (newRows()[rowIndex - realCount] ?? []) : browse().rows[rowIndex]
+    const value = values[columnIndex] ?? null
+    const quote = browse().quote
+    const table = quoteName(quote, target.table)
+    const name = quoteName(quote, column.name)
+    const keys = columns.filter((item) => item.primary)
+    const keyIndexes = keys.map((key) => columns.findIndex((item) => item.name === key.name))
+    const literal = sqlLiteral(value as string | null)
+    const insertSql = `INSERT INTO ${table} (${name}) VALUES (${literal});`
+    const updateSql = keys.length
+      ? `UPDATE ${table} SET ${name} = ${literal} WHERE ${keys
+          .map((key, position) => `${quoteName(quote, key.name)} = ${sqlLiteral(values[keyIndexes[position]] as string | null)}`)
+          .join(" AND ")};`
+      : ""
+    const text = textOf(value as string | null)
+    const withHeader = (separator: string, quoted: boolean) =>
+      `${column.name}\n${quoted ? delimited([value as string | null], separator, true) : text}`
+
+    return [
+      { label: "设置为空白字符串", onSelect: () => stageEdit(rowIndex, columnIndex, "") },
+      { label: "设置为 NULL", onSelect: () => stageEdit(rowIndex, columnIndex, null) },
+      { separator: true },
+      { label: "添加记录", onSelect: () => addRow() },
+      { label: "删除记录...", onSelect: () => deleteRow(rowIndex) },
+      { separator: true },
+      { label: "复制", onSelect: () => void copyText(text, "单元格") },
+      { label: "复制字段名称", onSelect: () => void copyText(column.name, "字段名称") },
+      {
+        label: "复制为",
+        submenu: [
+          { label: "Insert 语句", onSelect: () => void copyText(insertSql, "Insert 语句") },
+          { label: "Update 语句", disabled: !updateSql, onSelect: () => void copyText(updateSql, "Update 语句") },
+          { separator: true },
+          { label: "制表符分隔值（数据）", onSelect: () => void copyText(text, "数据") },
+          { label: "制表符分隔值（字段名称）", onSelect: () => void copyText(column.name, "字段名称") },
+          { label: "制表符分隔值（字段名称和数据）", onSelect: () => void copyText(withHeader("\t", false), "字段名称和数据") },
+          { separator: true },
+          { label: "逗号分隔值（数据）", onSelect: () => void copyText(delimited([value as string | null], ",", true), "数据") },
+          { label: "逗号分隔值（字段名称）", onSelect: () => void copyText(column.name, "字段名称") },
+          { label: "逗号分隔值（字段名称和数据）", onSelect: () => void copyText(withHeader(",", true), "字段名称和数据") },
+          { separator: true },
+          { label: "JSON", onSelect: () => void copyText(JSON.stringify(value, null, 2), "JSON") },
+        ],
+      },
+      { label: "粘贴", onSelect: () => void pasteCell(rowIndex, columnIndex) },
+      { separator: true },
+      {
+        label: "缩放",
+        submenu: [0.9, 1, 1.1, 1.25].map((scale) => ({
+          label: `${Math.round(scale * 100)}%`,
+          checked: columnView().scale === scale,
+          onSelect: () => updateColumnView({ scale }),
+        })),
+      },
+      { label: "刷新", onSelect: () => void refreshTable() },
+    ]
+  }
+
+  async function pasteCell(rowIndex: number, columnIndex: number) {
+    try {
+      const text = await navigator.clipboard.readText()
+      if (!text) {
+        showToast("剪贴板是空的")
+        return
+      }
+      stageText(rowIndex, columnIndex, text.replace(/\r?\n/g, " ").trim())
       showToast("已粘贴，记得保存")
     } catch {
       showToast("读取剪贴板失败")
@@ -2283,7 +2379,7 @@ export default function App() {
                         onRefresh={() => void refreshTable()}
                         onExport={() => showToast("导出结果 · CSV")}
                         rowStyle={rowStyle()}
-                        onEdit={stageEdit}
+                        onEdit={stageText}
                         pending={pendingEdits()}
                         pendingCount={
                           Object.keys(pendingEdits()).length + newRows().length + pendingDeletes().length
@@ -2293,6 +2389,7 @@ export default function App() {
                         view={columnView()}
                         onColumnMenu={(index, x, y) => setColumnMenu({ index, x, y })}
                         onRowMenu={(index, x, y) => setRowMenu({ index, x, y })}
+                        onCellMenu={(row, column, x, y) => setCellMenu({ row, column, x, y })}
                         rows={rowModel()}
                       />
                     }
@@ -2360,6 +2457,16 @@ export default function App() {
             y={menu().y}
             items={columnMenuItems(menu().index)}
             onClose={() => setColumnMenu(null)}
+          />
+        )}
+      </Show>
+      <Show when={cellMenu()}>
+        {(menu) => (
+          <ContextMenu
+            x={menu().x}
+            y={menu().y}
+            items={cellMenuItems(menu().row, menu().column)}
+            onClose={() => setCellMenu(null)}
           />
         )}
       </Show>
