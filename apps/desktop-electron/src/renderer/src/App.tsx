@@ -589,7 +589,9 @@ function DataTable(props: DataTableProps) {
     <div
       class="grid"
       role="table"
-      style={`--grid-cols: 48px repeat(${Math.max(props.columns.length, 1)}, minmax(150px, 1fr))`}
+      style={`--grid-cols: 48px repeat(${Math.max(props.columns.length, 1)}, minmax(150px, 1fr)); --grid-min: ${
+        48 + Math.max(props.columns.length, 1) * 150
+      }px`}
     >
       <div class="grid-head" role="row">
         <div class="th num">

@@ -3956,3 +3956,9 @@ html[data-theme="dark"] {
 .grid-row {
   border-bottom-color: color-mix(in srgb, var(--ink) 20%, transparent);
 }
+
+/* the grid overflows horizontally; the row box must span every track or the separators stop mid-table */
+.grid-head,
+.grid-row {
+  min-width: var(--grid-min, 0);
+}
