@@ -4555,3 +4555,8 @@ html[data-theme="dark"] {
 .tab.conn-tinted.active {
   background: color-mix(in srgb, var(--conn-color) 30%, transparent);
 }
+
+/* dialog: crisp border line, deeper offset shadow */
+.dialog {
+  box-shadow: 0 14px 30px -12px rgba(20, 20, 16, 0.45);
+}
