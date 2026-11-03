@@ -50,7 +50,9 @@ import {
   getSchemas,
   getTables,
   type DbxConnection,
+  type DbxConnectionInput,
 } from "./dbx/client"
+import NewConnectionDialog from "./NewConnectionDialog"
 
 type Theme = "light" | "dark"
 type Panel = "ai" | "sql" | "history"
@@ -258,6 +260,8 @@ interface SidebarProps {
   contentWidth: number
   maximized: boolean
   backendStatus: "checking" | "online" | "offline"
+  reloadToken: number
+  pendingId: string | null
   onToggle: () => void
   onNewConnection: () => void
   onToast: (message: string) => void
@@ -278,33 +282,45 @@ function Sidebar(props: SidebarProps) {
   >({})
   const [activeKey, setActiveKey] = createSignal("")
 
-  onMount(() => {
-    if (props.backendStatus !== "online") return
-    getConnections()
-      .then(async (list) => {
-        setConnections(list)
-        const next: Record<string, boolean> = {}
-        let first = true
-        for (const conn of list) next[conn.id] = first || (next[conn.id] ?? false)
-        setOpenConnections(next)
-        if (list.length > 0) void loadConnection(list[0])
-        if (list.length > 0 && first) {
-          const conn = list[0]
-          setActiveKey(`${conn.id}|${conn.database || "main"}|${conn.default_schema || "main"}|`)
-        }
+  async function refreshConnections(): Promise<DbxConnection[]> {
+    try {
+      const list = await getConnections()
+      setConnections(list)
+      return list
+    } catch {
+      props.onToast("读取连接列表失败")
+      return []
+    }
+  }
+
+  let initialized = false
+  createEffect(() => {
+    if (props.backendStatus !== "online" || initialized) return
+    initialized = true
+    void refreshConnections().then((list) => {
+      if (list.length === 0) return
+      const next: Record<string, boolean> = {}
+      list.forEach((conn, index) => {
+        next[conn.id] = index === 0
       })
-      .catch(() => props.onToast("读取连接列表失败"))
+      setOpenConnections(next)
+      void loadConnection(list[0])
+      setActiveKey(`${list[0].id}|${list[0].database || "main"}|${list[0].default_schema || "main"}|`)
+    })
   })
 
+  // a connection was just created: reload the list and open it
+  let lastReload = props.reloadToken
   createEffect(() => {
-    if (props.backendStatus === "online" && connections().length === 0) {
-      getConnections()
-        .then(async (list) => {
-          setConnections(list)
-          if (list.length > 0) void loadConnection(list[0])
-        })
-        .catch(() => undefined)
-    }
+    const token = props.reloadToken
+    if (token === lastReload) return
+    lastReload = token
+    void refreshConnections().then((list) => {
+      const conn = list.find((item) => item.id === props.pendingId)
+      if (!conn) return
+      setOpenConnections((state) => ({ ...state, [conn.id]: true }))
+      void loadConnection(conn)
+    })
   })
 
   async function loadConnection(conn: DbxConnection) {
@@ -1206,6 +1222,9 @@ export default function App() {
   const [activeTab, setActiveTab] = createSignal("table")
   const [selectedId, setSelectedId] = createSignal(3)
   const [commandOpen, setCommandOpen] = createSignal(false)
+  const [newConnectionOpen, setNewConnectionOpen] = createSignal(false)
+  const [connectionReload, setConnectionReload] = createSignal(0)
+  const [pendingConnectionId, setPendingConnectionId] = createSignal<string | null>(null)
   const [toast, setToast] = createSignal<string | null>(null)
   let toastTimer: number | undefined
 
@@ -1213,6 +1232,12 @@ export default function App() {
     setToast(message)
     if (toastTimer) window.clearTimeout(toastTimer)
     toastTimer = window.setTimeout(() => setToast(null), 2200)
+  }
+
+  function handleConnectionCreated(connection: DbxConnectionInput) {
+    setPendingConnectionId(connection.id)
+    setConnectionReload((value) => value + 1)
+    showToast(`已保存连接「${connection.name}」`)
   }
 
   onCleanup(() => {
@@ -1414,8 +1439,10 @@ export default function App() {
           contentWidth={sidebarWidth()}
           maximized={maximized()}
           backendStatus={backendStatus()}
+          reloadToken={connectionReload()}
+          pendingId={pendingConnectionId()}
           onToggle={() => setSidebarCollapsed(true)}
-          onNewConnection={() => showToast("新建连接")}
+          onNewConnection={() => setNewConnectionOpen(true)}
           onToast={showToast}
           onMinimize={() => windowAction("minimize")}
           onMaximize={() => windowAction("maximize")}
@@ -1516,6 +1543,13 @@ export default function App() {
       </div>
       <Show when={commandOpen()}>
         <CommandPalette onClose={() => setCommandOpen(false)} onCommand={handleCommand} onToast={showToast} />
+      </Show>
+      <Show when={newConnectionOpen()}>
+        <NewConnectionDialog
+          onClose={() => setNewConnectionOpen(false)}
+          onCreated={handleConnectionCreated}
+          onToast={showToast}
+        />
       </Show>
       <Toast message={toast()} />
     </div>

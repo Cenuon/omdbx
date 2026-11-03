@@ -61,6 +61,32 @@ export function getConnections(): Promise<DbxConnection[]> {
   return request<DbxConnection[]>("/api/connection/list")
 }
 
+/** Payload accepted by /connection/test and /connection/save. */
+export interface DbxConnectionInput {
+  id: string
+  name: string
+  db_type: string
+  host: string
+  port: number
+  username: string
+  password: string
+  database?: string
+}
+
+export function testConnection(config: DbxConnectionInput): Promise<string> {
+  return request<string>("/api/connection/test", {
+    method: "POST",
+    body: JSON.stringify({ config }),
+  })
+}
+
+export function saveConnection(config: DbxConnectionInput): Promise<void> {
+  return request<void>("/api/connection/save", {
+    method: "POST",
+    body: JSON.stringify({ configs: [config], removedIds: [] }),
+  })
+}
+
 export function connectDb(config: DbxConnection): Promise<string> {
   return request<string>("/api/connection/connect", {
     method: "POST",
