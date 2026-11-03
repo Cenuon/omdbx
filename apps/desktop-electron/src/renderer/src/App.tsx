@@ -40,7 +40,7 @@ import {
 } from "lucide-solid"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
 import SettingsView from "./SettingsView"
-import { historyItems, sqlFiles, type TabItem } from "./data"
+import { historyItems, sqlFiles, type RowStyle, type TabItem } from "./data"
 import {
   browseTable,
   connectDb,
@@ -582,12 +582,25 @@ interface DataTableProps {
   selectedKey: string | null
   onSelect: (key: string) => void
   emptyMessage?: string
+  rowStyle: RowStyle
+}
+
+/** Row tint for the configured striping mode. */
+function stripeOf(index: number, mode: RowStyle): string {
+  if (mode === "zebra") return index % 2 === 1 ? "b" : ""
+  if (mode === "triple") {
+    const position = (index + 1) % 6
+    if (position === 3) return "a"
+    if (position === 0) return "b"
+  }
+  return ""
 }
 
 function DataTable(props: DataTableProps) {
   return (
     <div
       class="grid"
+      classList={{ "rows-zebra": props.rowStyle === "zebra", "rows-triple": props.rowStyle === "triple" }}
       role="table"
       style={`--grid-cols: 48px repeat(${Math.max(props.columns.length, 1)}, minmax(150px, 1fr)); --grid-min: ${
         48 + Math.max(props.columns.length, 1) * 150
@@ -625,7 +638,12 @@ function DataTable(props: DataTableProps) {
           {(row, rowIndex) => {
             const key = `${rowIndex()}`
             return (
-              <div class="grid-row" classList={{ selected: props.selectedKey === key }} onClick={() => props.onSelect(key)}>
+              <div
+                class="grid-row"
+                classList={{ selected: props.selectedKey === key }}
+                data-stripe={stripeOf(rowIndex(), props.rowStyle)}
+                onClick={() => props.onSelect(key)}
+              >
                 <div class="td num">{rowIndex() + 1}</div>
                 <For each={row}>
                   {(cell) => (
@@ -687,6 +705,7 @@ interface TableViewProps {
   onSelect: (key: string) => void
   onRefresh: () => void
   onExport: () => void
+  rowStyle: RowStyle
 }
 
 function TableView(props: TableViewProps) {
@@ -728,6 +747,7 @@ function TableView(props: TableViewProps) {
             selectedKey={props.selectedKey}
             onSelect={props.onSelect}
             emptyMessage={props.tableName ? "表里还没有数据" : "在左侧选择一张表"}
+            rowStyle={props.rowStyle}
           />
         </Show>
       </Show>
@@ -762,6 +782,7 @@ function QueryView(props: {
   sql: string
   onSqlChange: (sql: string) => void
   onRun: () => void
+  rowStyle: RowStyle
 }) {
   return (
     <section class="view query-view">
@@ -844,6 +865,7 @@ function QueryView(props: {
             selectedKey={props.selectedKey}
             onSelect={props.onSelect}
             emptyMessage="运行查询查看结果"
+            rowStyle={props.rowStyle}
           />
         </Show>
         <GridFoot rowCount={props.rowCount} selected={!!props.selectedKey} elapsedMs={props.elapsedMs} />
@@ -1258,6 +1280,13 @@ function Toast(props: { message: string | null }) {
   )
 }
 
+const ROW_STYLE_KEY = "omdbx-row-style"
+
+function initialRowStyle(): RowStyle {
+  const saved = localStorage.getItem(ROW_STYLE_KEY)
+  return saved === "plain" || saved === "zebra" || saved === "triple" ? saved : "triple"
+}
+
 export default function App() {
   const [theme, setTheme] = createSignal<Theme>((localStorage.getItem("dbx-theme") as Theme) || "light")
   const [maximized, setMaximized] = createSignal(false)
@@ -1265,6 +1294,7 @@ export default function App() {
   const [rightCollapsed, setRightCollapsed] = createSignal(false)
   const [activePanel, setActivePanel] = createSignal<Panel>("ai")
   const [settingsOpen, setSettingsOpen] = createSignal(false)
+  const [rowStyle, setRowStyle] = createSignal<RowStyle>(initialRowStyle())
   const [backendStatus, setBackendStatus] = createSignal<"checking" | "online" | "offline">("checking")
   const [connections, setConnections] = createSignal<DbxConnection[]>([])
   const [activeTarget, setActiveTarget] = createSignal<{
@@ -1324,6 +1354,10 @@ export default function App() {
     localStorage.setItem("dbx-theme", theme())
     const meta = document.querySelector('meta[name="theme-color"]')
     meta?.setAttribute("content", theme() === "dark" ? "#141414" : "#ffffff")
+  })
+
+  createEffect(() => {
+    localStorage.setItem(ROW_STYLE_KEY, rowStyle())
   })
 
   function toggleTheme() {
@@ -1573,6 +1607,7 @@ export default function App() {
                         onSelect={setSelectedKey}
                         onRefresh={() => void refreshTable()}
                         onExport={() => showToast("导出结果 · CSV")}
+                        rowStyle={rowStyle()}
                       />
                     }
                   >
@@ -1593,6 +1628,7 @@ export default function App() {
                       sql={querySql()}
                       onSqlChange={setQuerySql}
                       onRun={() => void runQuery()}
+                      rowStyle={rowStyle()}
                     />
                   </Show>
                 </main>
@@ -1611,7 +1647,11 @@ export default function App() {
               </>
             }
           >
-            <SettingsView onClose={() => setSettingsOpen(false)} />
+            <SettingsView
+              onClose={() => setSettingsOpen(false)}
+              rowStyle={rowStyle()}
+              onRowStyle={setRowStyle}
+            />
           </Show>
         </div>
       </div>

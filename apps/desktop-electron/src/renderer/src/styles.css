@@ -3962,3 +3962,63 @@ html[data-theme="dark"] {
 .grid-row {
   min-width: var(--grid-min, 0);
 }
+
+/* ---------- row striping ---------- */
+:root {
+  --row-stripe-a: rgba(0, 0, 0, 0.035);
+  --row-stripe-b: rgba(56, 116, 226, 0.12);
+  --row-selected: rgba(56, 116, 226, 0.18);
+  --row-selected-line: rgba(56, 116, 226, 0.5);
+}
+html[data-theme="dark"] {
+  --row-stripe-a: rgba(255, 255, 255, 0.035);
+  --row-stripe-b: rgba(96, 156, 255, 0.16);
+  --row-selected: rgba(96, 156, 255, 0.22);
+  --row-selected-line: rgba(96, 156, 255, 0.6);
+}
+.grid.rows-triple .grid-row[data-stripe="a"],
+.grid.rows-zebra .grid-row[data-stripe="b"] {
+  background: var(--row-stripe-a);
+}
+.grid.rows-triple .grid-row[data-stripe="b"] {
+  background: var(--row-stripe-b);
+}
+/* the selected row wins over any stripe */
+.grid.rows-triple .grid-row.selected,
+.grid.rows-zebra .grid-row.selected,
+.grid .grid-row.selected {
+  background: var(--row-selected);
+  box-shadow: inset 0 0 0 1px var(--row-selected-line);
+}
+.grid-row.selected .td,
+.grid-row.selected .td.num {
+  color: var(--ink);
+}
+
+/* ---------- segmented control ---------- */
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+}
+.segmented-item {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.segmented-item:hover {
+  color: var(--ink);
+}
+.segmented-item.active {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 550;
+  box-shadow: var(--shadow-xs);
+}

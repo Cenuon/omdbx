@@ -19,6 +19,7 @@ import {
   Workflow,
 } from "lucide-solid"
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js"
+import type { RowStyle } from "./data"
 
 interface SettingRowProps {
   label: string
@@ -56,6 +57,31 @@ function Select(props: { label: string }) {
   )
 }
 
+function Segmented<T extends string>(props: {
+  label: string
+  value: T
+  options: Array<{ value: T; label: string }>
+  onChange: (value: T) => void
+}) {
+  return (
+    <div class="segmented" role="radiogroup" aria-label={props.label}>
+      <For each={props.options}>
+        {(option) => (
+          <button
+            class="segmented-item"
+            classList={{ active: props.value === option.value }}
+            role="radio"
+            aria-checked={props.value === option.value}
+            onClick={() => props.onChange(option.value)}
+          >
+            {option.label}
+          </button>
+        )}
+      </For>
+    </div>
+  )
+}
+
 const sections = [
   { id: "providers", label: "提供商", icon: () => <Boxes size={16} /> },
   { id: "models", label: "模型", icon: () => <Sparkles size={16} /> },
@@ -74,7 +100,11 @@ const sections = [
   { id: "about", label: "关于", icon: () => <Info size={16} /> },
 ]
 
-export default function SettingsView(props: { onClose: () => void }) {
+export default function SettingsView(props: {
+  onClose: () => void
+  rowStyle: RowStyle
+  onRowStyle: (style: RowStyle) => void
+}) {
   const [active, setActive] = createSignal("preferences")
   const [query, setQuery] = createSignal("")
   const [prefs, setPrefs] = createSignal({
@@ -154,6 +184,21 @@ export default function SettingsView(props: { onClose: () => void }) {
             </div>
 
             <section class="settings-card">
+              <SettingRow
+                label="表格行背景"
+                description="用背景色区分行：每三行一次，浅灰与浅蓝交替；选中或编辑的行会整行高亮。"
+              >
+                <Segmented
+                  label="表格行背景"
+                  value={props.rowStyle}
+                  onChange={props.onRowStyle}
+                  options={[
+                    { value: "plain", label: "无" },
+                    { value: "zebra", label: "隔行" },
+                    { value: "triple", label: "三行灰蓝" },
+                  ]}
+                />
+              </SettingRow>
               <SettingRow label="语言" description="更改 OMDBX 的显示语言">
                 <Select label="简体中文" />
               </SettingRow>

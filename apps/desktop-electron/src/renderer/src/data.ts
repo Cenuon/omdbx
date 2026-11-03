@@ -59,6 +59,8 @@ export interface TabItem {
   unsaved?: boolean
 }
 
+export type RowStyle = "plain" | "zebra" | "triple"
+
 export const sqlFiles = [
   { name: "03_create_products.sql", tag: "oracle21c" },
   { name: "10_create_view.sql", tag: "oracle21c" },
