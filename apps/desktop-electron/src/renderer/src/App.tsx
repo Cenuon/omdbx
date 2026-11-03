@@ -86,9 +86,11 @@ function Titlebar(props: {
   tabs: TabItem[]
   active: string
   sidebarCollapsed: boolean
+  rightCollapsed: boolean
   settingsOpen: boolean
   theme: Theme
   onToggleSidebar: () => void
+  onToggleRight: () => void
   onSelect: (id: string) => void
   onCloseTab: (id: string) => void
   onNewQuery: () => void
@@ -184,6 +186,16 @@ function Titlebar(props: {
         >
           <Settings2 size={16} />
         </button>
+        <Show when={!props.settingsOpen}>
+          <button
+            class="titlebar-toggle"
+            aria-label={props.rightCollapsed ? "展开右侧面板" : "收起右侧面板"}
+            title={props.rightCollapsed ? "展开右侧面板" : "收起右侧面板"}
+            onClick={props.onToggleRight}
+          >
+            <PanelRight size={16} />
+          </button>
+        </Show>
       </div>
     </header>
   )
@@ -993,7 +1005,6 @@ function RightPanel(props: {
   active: Panel
   width: number
   onPanel: (panel: Panel) => void
-  onCollapse: () => void
   onToast: (message: string) => void
   onInsert: () => void
 }) {
@@ -1012,9 +1023,6 @@ function RightPanel(props: {
           <button class="panel-tab" classList={{ active: props.active === "history" }} onClick={() => props.onPanel("history")}>
             <History size={14} />
             历史
-          </button>
-          <button class="panel-collapse" aria-label="收起右侧面板" title="收起右侧面板" onClick={props.onCollapse}>
-            <PanelRight size={16} />
           </button>
         </div>
         <Show when={props.active === "ai"}>
@@ -1402,9 +1410,11 @@ export default function App() {
           tabs={tabs()}
           active={activeTab()}
           sidebarCollapsed={sidebarCollapsed()}
+          rightCollapsed={rightCollapsed()}
           settingsOpen={settingsOpen()}
           theme={theme()}
           onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
+          onToggleRight={() => setRightCollapsed((value) => !value)}
           onSelect={(id) => {
             setSettingsOpen(false)
             setActiveTab(id)
@@ -1471,7 +1481,6 @@ export default function App() {
                     active={activePanel()}
                     width={rightWidth()}
                     onPanel={handlePanel}
-                    onCollapse={() => setRightCollapsed(true)}
                     onToast={showToast}
                     onInsert={() => {
                       openQuery()

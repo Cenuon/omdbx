@@ -2613,20 +2613,6 @@ html[data-theme="dark"] .run-btn:hover {
 .panel-tab svg {
   color: currentColor;
 }
-.panel-collapse {
-  margin-left: auto;
-  align-self: center;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: 5px;
-  color: var(--muted);
-}
-.panel-collapse:hover {
-  background: var(--surface-3);
-  color: var(--ink);
-}
 .ai-body {
   padding: 16px 14px 6px;
 }
@@ -2985,8 +2971,7 @@ html[data-theme="dark"] {
 .side-nav-row > svg,
 .table-actions .icon-btn svg,
 .result-actions .icon-btn svg,
-.editor-actions .icon-btn svg,
-.panel-collapse svg {
+.editor-actions .icon-btn svg {
   width: 16px;
   height: 16px;
 }
