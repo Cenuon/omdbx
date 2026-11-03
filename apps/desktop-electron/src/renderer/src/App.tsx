@@ -27,6 +27,7 @@ import {
   LayoutGrid,
   KeyRound,
   List,
+  LocateFixed,
   Lock,
   MessageSquare,
   Moon,
@@ -325,6 +326,7 @@ interface SidebarProps {
   backendStatus: "checking" | "online" | "offline"
   reloadToken: number
   pendingId: string | null
+  activeTab: string
   onToggle: () => void
   onNewConnection: () => void
   onNewQuery: () => void
@@ -377,7 +379,6 @@ function Sidebar(props: SidebarProps) {
     >
   >({})
   const [openDatabases, setOpenDatabases] = createSignal<Record<string, boolean>>({})
-  const [activeKey, setActiveKey] = createSignal("")
   const [folders, setFolders] = createSignal<SidebarFolder[]>([])
   const [stars, setStars] = createSignal<string[]>([])
   const [openFolders, setOpenFolders] = createSignal<Record<string, boolean>>({})
@@ -432,7 +433,6 @@ function Sidebar(props: SidebarProps) {
       })
       setOpenConnections(next)
       void loadConnection(list[0])
-      setActiveKey(`${list[0].id}|${list[0].database || "main"}|${list[0].default_schema || "main"}|`)
     })
   })
 
@@ -528,8 +528,29 @@ function Sidebar(props: SidebarProps) {
   }
 
   function openTable(conn: DbxConnection, database: string, schema: string, table: string) {
-    setActiveKey(`${conn.id}|${database}|${schema}|${table}`)
     props.onOpenTable(conn, database, schema, table)
+  }
+
+  /** Expand the tree down to the table shown in the active tab and scroll to it. */
+  async function locateActiveTable() {
+    const [connId, database, , table] = props.activeTab.split("|")
+    const conn = connections().find((item) => item.id === connId)
+    if (!conn || !table) {
+      props.onToast("当前没有打开的表")
+      return
+    }
+    setQuery("")
+    const folder = folderOf(conn.id)
+    if (folder) setOpenFolders((state) => ({ ...state, [folder.id]: true }))
+    setOpenConnections((state) => ({ ...state, [conn.id]: true }))
+    if (!connectionData()[conn.id]) await loadConnection(conn)
+    if (databasesOf(conn).length > 1) {
+      setOpenDatabases((state) => ({ ...state, [`${conn.id}|${database}`]: true }))
+    }
+    await loadTables(conn, database)
+    requestAnimationFrame(() => {
+      document.querySelector(`.tree-table[data-key="${props.activeTab}"]`)?.scrollIntoView({ block: "center" })
+    })
   }
 
   function renderTables(conn: DbxConnection, database: string, indent: number) {
@@ -554,7 +575,8 @@ function Sidebar(props: SidebarProps) {
             {(row) => (
               <button
                 class="tree-row leaf tree-table"
-                classList={{ active: activeKey() === `${conn.id}|${database}|${row.schema}|${row.table}` }}
+                classList={{ active: props.activeTab === `${conn.id}|${database}|${row.schema}|${row.table}` }}
+                data-key={`${conn.id}|${database}|${row.schema}|${row.table}`}
                 style={{ "padding-left": `${indent}px` }}
                 onClick={() => openTable(conn, database, row.schema, row.table)}
               >
@@ -895,6 +917,14 @@ function Sidebar(props: SidebarProps) {
           <div class="tree-label">
             <Database size={16} />
             我的连接
+            <button
+              class="tree-locate"
+              aria-label="定位当前表"
+              title="定位当前表"
+              onClick={() => void locateActiveTable()}
+            >
+              <LocateFixed size={15} />
+            </button>
           </div>
           <For each={visibleFolders()}>
             {(folder) => (
@@ -2681,6 +2711,7 @@ export default function App() {
           backendStatus={backendStatus()}
           reloadToken={connectionReload()}
           pendingId={pendingConnectionId()}
+          activeTab={activeTab()}
           onToggle={() => setSidebarCollapsed(true)}
           onNewConnection={() => setNewConnectionOpen(true)}
           onNewQuery={openQuery}

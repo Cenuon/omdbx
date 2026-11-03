@@ -4592,3 +4592,21 @@ html[data-theme="dark"] .dialog {
 .sidebar .tree-row {
   padding-left: 6px;
 }
+
+/* locate button pinned to the right of the 我的连接 header */
+.sidebar .tree-locate {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--muted);
+  transition: background 120ms ease, color 120ms ease;
+}
+.sidebar .tree-locate:hover {
+  background: var(--surface-3);
+}
+.sidebar .tree-locate:hover svg {
+  color: var(--ink);
+}
