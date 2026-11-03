@@ -4646,3 +4646,52 @@ html[data-theme="dark"] .dialog {
   height: 20px;
   flex: 0 0 20px;
 }
+
+/* per-type connection form: textarea, select, checkbox and hint rows */
+.field textarea,
+.field select {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-family: inherit;
+  line-height: 1.5;
+  resize: vertical;
+  outline: 0;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.field select {
+  height: 32px;
+  padding: 0 28px 0 9px;
+  appearance: none;
+  cursor: pointer;
+}
+.field textarea {
+  min-height: 60px;
+}
+.field textarea:focus,
+.field select:focus {
+  border-color: var(--line-strong);
+  background: var(--surface);
+}
+.field textarea::placeholder {
+  color: var(--faint);
+}
+.field input.field-check {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  accent-color: var(--accent);
+}
+.field-hint {
+  color: var(--faint);
+  font-size: 10.5px;
+  line-height: 1.4;
+}

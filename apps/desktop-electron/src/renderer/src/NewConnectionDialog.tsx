@@ -6,6 +6,7 @@ import {
   type DatabaseCategory,
   type DatabaseTypeInfo,
 } from "./dbx/databaseTypes"
+import { connectionDefaults, connectionFields, fieldRows, type FieldSpec, type Values } from "./dbx/connectionFields"
 import { saveConnection, testConnection, type DbxConnectionInput } from "./dbx/client"
 
 export default function NewConnectionDialog(props: {
@@ -20,15 +21,9 @@ export default function NewConnectionDialog(props: {
   const [selected, setSelected] = createSignal<DatabaseTypeInfo>(databaseTypes[0])
 
   const [name, setName] = createSignal("")
-  const [host, setHost] = createSignal("")
-  const [port, setPort] = createSignal(0)
-  const [username, setUsername] = createSignal("")
-  const [password, setPassword] = createSignal("")
-  const [database, setDatabase] = createSignal("")
+  const [values, setValues] = createSignal<Values>({})
   const [busy, setBusy] = createSignal<"test" | "save" | null>(null)
   const [result, setResult] = createSignal<{ ok: boolean; message: string } | null>(null)
-
-  const isFile = () => selected().localFile
 
   const visible = createMemo(() => {
     const needle = keyword().trim().toLowerCase()
@@ -40,12 +35,21 @@ export default function NewConnectionDialog(props: {
     return databaseTypes.filter((type) => type.category === category())
   })
 
+  const shown = createMemo(() => {
+    const all = connectionFields(selected())
+    return all.filter((field) => !field.visibleWhen || field.visibleWhen(values()))
+  })
+  const rows = createMemo(() => fieldRows(shown()))
+
   function openForm(type: DatabaseTypeInfo) {
     setSelected(type)
-    setPort(type.defaultPort)
-    setUsername(type.defaultUser)
+    setValues(connectionDefaults(type))
     setResult(null)
     setStep("form")
+  }
+
+  function setValue(key: string, value: string | number | boolean) {
+    setValues((state) => ({ ...state, [key]: value }))
   }
 
   function config(): DbxConnectionInput {
@@ -53,18 +57,26 @@ export default function NewConnectionDialog(props: {
       id,
       name: name().trim(),
       db_type: selected().dbType,
-      host: host().trim(),
-      port: isFile() ? 0 : port(),
-      username: isFile() ? "" : username().trim(),
-      password: isFile() ? "" : password(),
+      host: String(values().host ?? ""),
+      port: Number(values().port) || 0,
+      username: String(values().username ?? ""),
+      password: String(values().password ?? ""),
     }
-    if (database().trim()) payload.database = database().trim()
+    for (const field of shown()) {
+      if (["host", "port", "username", "password"].includes(field.key)) continue
+      const value = values()[field.key]
+      if (value === undefined || value === "" || value === false) continue
+      payload[field.key] = value
+    }
     return payload
   }
 
   function validate(): string | null {
     if (!name().trim()) return "请填写连接名称"
-    if (!host().trim()) return isFile() ? "请填写数据库文件路径" : "请填写主机地址"
+    const host = shown().find((field) => field.key === "host")
+    if (host && !String(values().host ?? "").trim()) {
+      return selected().localFile ? "请填写数据库文件路径" : "请填写主机地址"
+    }
     return null
   }
 
@@ -96,6 +108,58 @@ export default function NewConnectionDialog(props: {
       setResult({ ok: false, message: error instanceof Error ? error.message : String(error) })
       setBusy(null)
     }
+  }
+
+  function renderField(field: FieldSpec) {
+    const value = () => values()[field.key]
+    const narrow = field.kind === "number"
+    return (
+      <label class="field" classList={{ "field-narrow": narrow }}>
+        <span>{field.label}</span>
+        <Show when={field.kind === "select"}>
+          <span class="select-wrap">
+            <select value={String(value() ?? "")} onChange={(event) => setValue(field.key, event.currentTarget.value)}>
+              <For each={field.options ?? []}>{(option) => <option value={option.value}>{option.label}</option>}</For>
+            </select>
+            <ChevronDown size={13} />
+          </span>
+        </Show>
+        <Show when={field.kind === "textarea"}>
+          <textarea
+            rows="3"
+            value={String(value() ?? "")}
+            placeholder={field.placeholder}
+            onInput={(event) => setValue(field.key, event.currentTarget.value)}
+          />
+        </Show>
+        <Show when={field.kind === "checkbox"}>
+          <input
+            type="checkbox"
+            class="field-check"
+            checked={!!value()}
+            onChange={(event) => setValue(field.key, event.currentTarget.checked)}
+          />
+        </Show>
+        <Show when={field.kind === "text" || field.kind === "password"}>
+          <input
+            type={field.kind === "password" ? "password" : "text"}
+            value={String(value() ?? "")}
+            placeholder={field.placeholder}
+            onInput={(event) => setValue(field.key, event.currentTarget.value)}
+          />
+        </Show>
+        <Show when={field.kind === "number"}>
+          <input
+            type="number"
+            value={Number(value() ?? 0)}
+            onInput={(event) => setValue(field.key, Number(event.currentTarget.value) || 0)}
+          />
+        </Show>
+        <Show when={field.hint && field.kind !== "checkbox"}>
+          <small class="field-hint">{field.hint}</small>
+        </Show>
+      </label>
+    )
   }
 
   return (
@@ -200,63 +264,15 @@ export default function NewConnectionDialog(props: {
               />
             </label>
 
-            <Show
-              when={isFile()}
-              fallback={
-                <>
+            <For each={rows()}>
+              {(row) => (
+                <Show when={row.length > 1} fallback={renderField(row[0])}>
                   <div class="field-row">
-                    <label class="field">
-                      <span>主机</span>
-                      <input
-                        value={host()}
-                        onInput={(event) => setHost(event.currentTarget.value)}
-                        placeholder="127.0.0.1"
-                      />
-                    </label>
-                    <label class="field field-narrow">
-                      <span>端口</span>
-                      <input
-                        type="number"
-                        value={port()}
-                        onInput={(event) => setPort(Number(event.currentTarget.value) || 0)}
-                      />
-                    </label>
+                    <For each={row}>{(field) => renderField(field)}</For>
                   </div>
-                  <div class="field-row">
-                    <label class="field">
-                      <span>用户名</span>
-                      <input value={username()} onInput={(event) => setUsername(event.currentTarget.value)} />
-                    </label>
-                    <label class="field">
-                      <span>密码</span>
-                      <input
-                        type="password"
-                        value={password()}
-                        onInput={(event) => setPassword(event.currentTarget.value)}
-                      />
-                    </label>
-                  </div>
-                </>
-              }
-            >
-              <label class="field">
-                <span>数据库文件</span>
-                <input
-                  value={host()}
-                  onInput={(event) => setHost(event.currentTarget.value)}
-                  placeholder="/path/to/database"
-                />
-              </label>
-            </Show>
-
-            <label class="field">
-              <span>数据库</span>
-              <input
-                value={database()}
-                onInput={(event) => setDatabase(event.currentTarget.value)}
-                placeholder={isFile() ? "留空即可" : "可选"}
-              />
-            </label>
+                </Show>
+              )}
+            </For>
 
             <Show when={result()}>
               {(state) => (

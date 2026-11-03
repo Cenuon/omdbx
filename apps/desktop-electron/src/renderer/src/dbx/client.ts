@@ -73,6 +73,8 @@ export interface DbxConnectionInput {
   username: string
   password: string
   database?: string
+  /** Per-type ConnectionConfig fields (url_params, redis_*, ssl, …). */
+  [key: string]: unknown
 }
 
 export function testConnection(config: DbxConnectionInput): Promise<string> {
