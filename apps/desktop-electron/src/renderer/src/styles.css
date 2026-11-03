@@ -4047,3 +4047,8 @@ html[data-theme="dark"] {
 .grid-row.selected::before {
   display: none;
 }
+
+/* taller header band */
+.th {
+  height: 42px;
+}
