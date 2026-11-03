@@ -4052,3 +4052,24 @@ html[data-theme="dark"] {
 .th {
   height: 42px;
 }
+
+/* ---------- data grid font ---------- */
+:root {
+  --font-system-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --grid-font: var(--font-system-mono);
+}
+html[data-grid-font="plex"] {
+  --grid-font: var(--font-mono);
+}
+html[data-grid-font="ui"] {
+  --grid-font: var(--font-ui);
+}
+.grid {
+  font-family: var(--grid-font);
+}
+.th-type,
+.td.num,
+.th-name .sort,
+.td.birth {
+  font-family: var(--grid-font);
+}

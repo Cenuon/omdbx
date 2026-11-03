@@ -40,7 +40,7 @@ import {
 } from "lucide-solid"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
 import SettingsView from "./SettingsView"
-import { historyItems, sqlFiles, type RowStyle, type TabItem } from "./data"
+import { historyItems, sqlFiles, type GridFont, type RowStyle, type TabItem } from "./data"
 import {
   browseTable,
   connectDb,
@@ -1281,10 +1281,16 @@ function Toast(props: { message: string | null }) {
 }
 
 const ROW_STYLE_KEY = "omdbx-row-style"
+const GRID_FONT_KEY = "omdbx-grid-font"
 
 function initialRowStyle(): RowStyle {
   const saved = localStorage.getItem(ROW_STYLE_KEY)
   return saved === "plain" || saved === "zebra" || saved === "triple" ? saved : "triple"
+}
+
+function initialGridFont(): GridFont {
+  const saved = localStorage.getItem(GRID_FONT_KEY)
+  return saved === "system-mono" || saved === "plex" || saved === "ui" ? saved : "system-mono"
 }
 
 export default function App() {
@@ -1295,6 +1301,7 @@ export default function App() {
   const [activePanel, setActivePanel] = createSignal<Panel>("ai")
   const [settingsOpen, setSettingsOpen] = createSignal(false)
   const [rowStyle, setRowStyle] = createSignal<RowStyle>(initialRowStyle())
+  const [gridFont, setGridFont] = createSignal<GridFont>(initialGridFont())
   const [backendStatus, setBackendStatus] = createSignal<"checking" | "online" | "offline">("checking")
   const [connections, setConnections] = createSignal<DbxConnection[]>([])
   const [activeTarget, setActiveTarget] = createSignal<{
@@ -1358,6 +1365,11 @@ export default function App() {
 
   createEffect(() => {
     localStorage.setItem(ROW_STYLE_KEY, rowStyle())
+  })
+
+  createEffect(() => {
+    document.documentElement.dataset.gridFont = gridFont()
+    localStorage.setItem(GRID_FONT_KEY, gridFont())
   })
 
   function toggleTheme() {
@@ -1651,6 +1663,8 @@ export default function App() {
               onClose={() => setSettingsOpen(false)}
               rowStyle={rowStyle()}
               onRowStyle={setRowStyle}
+              gridFont={gridFont()}
+              onGridFont={setGridFont}
             />
           </Show>
         </div>

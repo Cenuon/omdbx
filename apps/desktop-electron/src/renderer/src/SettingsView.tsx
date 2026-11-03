@@ -19,7 +19,7 @@ import {
   Workflow,
 } from "lucide-solid"
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js"
-import type { RowStyle } from "./data"
+import type { GridFont, RowStyle } from "./data"
 
 interface SettingRowProps {
   label: string
@@ -104,6 +104,8 @@ export default function SettingsView(props: {
   onClose: () => void
   rowStyle: RowStyle
   onRowStyle: (style: RowStyle) => void
+  gridFont: GridFont
+  onGridFont: (font: GridFont) => void
 }) {
   const [active, setActive] = createSignal("preferences")
   const [query, setQuery] = createSignal("")
@@ -196,6 +198,21 @@ export default function SettingsView(props: {
                     { value: "plain", label: "无" },
                     { value: "zebra", label: "隔行" },
                     { value: "triple", label: "三行灰蓝" },
+                  ]}
+                />
+              </SettingRow>
+              <SettingRow
+                label="表格字体"
+                description="数据表格使用的字体，默认跟随系统等宽字体。"
+              >
+                <Segmented
+                  label="表格字体"
+                  value={props.gridFont}
+                  onChange={props.onGridFont}
+                  options={[
+                    { value: "system-mono", label: "系统等宽" },
+                    { value: "plex", label: "IBM Plex Mono" },
+                    { value: "ui", label: "界面字体" },
                   ]}
                 />
               </SettingRow>

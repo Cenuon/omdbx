@@ -61,6 +61,8 @@ export interface TabItem {
 
 export type RowStyle = "plain" | "zebra" | "triple"
 
+export type GridFont = "system-mono" | "plex" | "ui"
+
 export const sqlFiles = [
   { name: "03_create_products.sql", tag: "oracle21c" },
   { name: "10_create_view.sql", tag: "oracle21c" },
