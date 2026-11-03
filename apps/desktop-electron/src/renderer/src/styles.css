@@ -3581,16 +3581,6 @@ html[data-theme="dark"] {
   position: relative;
   padding: 1px 0 4px;
 }
-/* spine that ties the children back to the connection */
-.tree-children::before {
-  content: "";
-  position: absolute;
-  top: 3px;
-  bottom: 8px;
-  left: 6px;
-  width: 1px;
-  background: var(--line);
-}
 
 .tree-path {
   height: 22px;
@@ -3916,11 +3906,6 @@ html[data-theme="dark"] {
 }
 .sidebar .tree-row.tree-db > svg:not(.chev) {
   color: var(--faint);
-}
-.tree-children .tree-children::before {
-  left: 26px;
-  top: 0;
-  bottom: 4px;
 }
 
 /* header cells follow the column count set on .grid; long names clip instead of wrapping */
@@ -4708,4 +4693,9 @@ html[data-theme="dark"] .dialog {
 }
 .sidebar .tree-label svg {
   color: var(--muted);
+}
+
+/* tree rows start at the same x as the 我的连接 icon, so no arrow sits left of it */
+.sidebar .tree-row {
+  padding-left: 6px;
 }
