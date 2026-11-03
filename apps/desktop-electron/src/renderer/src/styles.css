@@ -4397,3 +4397,12 @@ html[data-theme="dark"] {
   border: 1px solid var(--line-strong);
   box-shadow: 0 8px 20px -12px rgba(20, 20, 16, 0.16), 0 1px 3px rgba(20, 20, 16, 0.05);
 }
+
+/* keep the parent item highlighted while its submenu is open */
+.menu-item.active:not(.disabled) {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+.menu-item.active:not(.disabled) .menu-icon {
+  color: var(--ink);
+}

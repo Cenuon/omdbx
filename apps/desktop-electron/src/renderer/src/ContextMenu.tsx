@@ -51,7 +51,11 @@ export default function ContextMenu(props: {
               <div class="menu-wrap" onMouseEnter={() => setOpenSub(item.submenu ? index() : null)}>
                 <button
                   class="menu-item"
-                  classList={{ disabled: item.disabled, checked: item.checked }}
+                  classList={{
+                    disabled: item.disabled,
+                    checked: item.checked,
+                    active: !!item.submenu && openSub() === index(),
+                  }}
                   role="menuitem"
                   disabled={item.disabled}
                   onClick={() => pick(item)}
