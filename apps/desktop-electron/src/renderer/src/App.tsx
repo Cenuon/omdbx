@@ -168,17 +168,18 @@ function Titlebar(props: {
         </div>
       </Show>
 
-      <div
-        class="titlebar-tabs"
-        role="tablist"
-        onWheel={(event) => {
-          const strip = event.currentTarget
-          if (strip.scrollWidth <= strip.clientWidth) return
-          strip.scrollLeft += event.deltaY + event.deltaX
-          event.preventDefault()
-        }}
-      >
-        <For each={props.tabs}>
+      <div class="titlebar-tabs">
+        <div
+          class="titlebar-tabs-scroll"
+          role="tablist"
+          onWheel={(event) => {
+            const strip = event.currentTarget
+            if (strip.scrollWidth <= strip.clientWidth) return
+            strip.scrollLeft += event.deltaY + event.deltaX
+            event.preventDefault()
+          }}
+        >
+          <For each={props.tabs}>
           {(tab) => (
             <div
               class="tab"
@@ -215,7 +216,8 @@ function Titlebar(props: {
               </button>
             </div>
           )}
-        </For>
+          </For>
+        </div>
         <button class="tab-add" aria-label="新建查询" title="新建查询" onClick={props.onNewQuery}>
           <Plus size={14} />
         </button>

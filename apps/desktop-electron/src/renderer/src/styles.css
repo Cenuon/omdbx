@@ -4665,14 +4665,20 @@ html[data-theme="dark"] .dialog {
   height: 11px;
 }
 
-/* tab strip: full names, scrolls sideways with the wheel, no scrollbar */
-.titlebar-tabs {
+/* tab strip: full names, scrolls sideways with the wheel, no scrollbar.
+   the add button sits outside the scrolling strip so it stays pinned. */
+.titlebar-tabs-scroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
-.titlebar-tabs::-webkit-scrollbar {
+.titlebar-tabs-scroll::-webkit-scrollbar {
   display: none;
 }
 .titlebar-tabs .tab {
