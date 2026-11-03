@@ -783,11 +783,11 @@ function TableView(props: TableViewProps) {
         <div class="table-actions">
           <Show when={props.pendingCount > 0}>
             <span class="pending-note">{props.pendingCount} 处待保存</span>
-            <button class="ghost-btn" onClick={props.onCancelEdits}>
-              取消
+            <button class="icon-btn" aria-label="取消修改" title="取消修改" onClick={props.onCancelEdits}>
+              <X size={16} />
             </button>
-            <button class="primary-btn" onClick={props.onSaveEdits}>
-              保存
+            <button class="icon-btn save-edit" aria-label="保存修改" title="保存修改" onClick={props.onSaveEdits}>
+              <Check size={16} />
             </button>
             <span class="toolbar-sep" />
           </Show>

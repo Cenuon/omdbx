@@ -4112,3 +4112,12 @@ html[data-theme="dark"] {
   font-size: 11.5px;
   white-space: nowrap;
 }
+
+/* the pending-save action reads as the primary one among the toolbar icons */
+.icon-btn.save-edit {
+  color: var(--accent);
+}
+.icon-btn.save-edit:hover {
+  background: var(--surface-3);
+  color: var(--accent-strong);
+}
