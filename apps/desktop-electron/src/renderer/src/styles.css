@@ -4650,3 +4650,17 @@ html[data-theme="dark"] .dialog {
 .dialog-foot-right {
   gap: 8px;
 }
+
+/* update badge: match the visual weight of the other titlebar icons */
+.titlebar-toggle.update-pill {
+  width: 18px;
+  height: 18px;
+  margin: 0 7px;
+  border-radius: 50%;
+  background: var(--update-color);
+  color: #fff;
+}
+.titlebar-toggle.update-pill svg {
+  width: 11px;
+  height: 11px;
+}

@@ -42,6 +42,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  Settings,
   Settings2,
   Sparkles,
   SquarePen,
@@ -241,7 +242,7 @@ function Titlebar(props: {
           aria-pressed={props.settingsOpen}
           onClick={props.onSettings}
         >
-          <Settings2 size={16} />
+          <Settings size={16} />
         </button>
         <Show when={!props.settingsOpen}>
           <button
@@ -1813,7 +1814,7 @@ function CommandPalette(props: {
     { id: "new-connection", label: "新建连接", hint: "⌘⇧N", icon: <Database size={14} /> },
     { id: "format", label: "格式化当前 SQL", hint: "⌘⇧F", icon: <WandSparkles size={14} /> },
     { id: "toggle-theme", label: "切换主题", hint: "⌘⇧L", icon: <Moon size={14} /> },
-    { id: "settings", label: "打开设置", hint: "⌘,", icon: <Settings2 size={14} /> },
+    { id: "settings", label: "打开设置", hint: "⌘,", icon: <Settings size={14} /> },
   ]
   const [query, setQuery] = createSignal("")
   const [index, setIndex] = createSignal(0)
