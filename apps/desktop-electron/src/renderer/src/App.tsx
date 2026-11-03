@@ -390,6 +390,7 @@ function Sidebar(props: SidebarProps) {
   const [folderName, setFolderName] = createSignal("")
   const [sidebarMenu, setSidebarMenu] = createSignal<{ x: number; y: number } | null>(null)
   const [manageOpen, setManageOpen] = createSignal(false)
+  const [query, setQuery] = createSignal("")
 
   let layoutReady = false
 
@@ -579,14 +580,39 @@ function Sidebar(props: SidebarProps) {
     return folders().find((folder) => folder.connections.includes(connectionId))
   }
 
+  /** Sidebar search filters the connection tree by connection name or type. */
+  function matchesQuery(conn: DbxConnection): boolean {
+    const q = query().trim().toLowerCase()
+    if (!q) return true
+    return conn.name.toLowerCase().includes(q) || conn.db_type.toLowerCase().includes(q)
+  }
+
+  function searching(): boolean {
+    return query().trim().length > 0
+  }
+
+  function folderOpen(id: string): boolean {
+    return !!openFolders()[id] || searching()
+  }
+
   function folderConnections(folder: SidebarFolder): DbxConnection[] {
     return folder.connections
       .map((id) => connections().find((conn) => conn.id === id))
       .filter((conn): conn is DbxConnection => !!conn)
+      .filter(matchesQuery)
+  }
+
+  function visibleFolders(): SidebarFolder[] {
+    if (!searching()) return folders()
+    return folders().filter((folder) => folderConnections(folder).length > 0)
   }
 
   function ungroupedConnections(): DbxConnection[] {
-    return connections().filter((conn) => !folderOf(conn.id))
+    return connections().filter((conn) => !folderOf(conn.id)).filter(matchesQuery)
+  }
+
+  function matchedCount(): number {
+    return connections().filter(matchesQuery).length
   }
 
   function toggleFolder(id: string) {
@@ -850,6 +876,15 @@ function Sidebar(props: SidebarProps) {
           <SquarePen size={16} />
           新建连接
         </button>
+        <label class="side-nav-row side-search-row">
+          <Search size={16} />
+          <input
+            value={query()}
+            placeholder="搜索连接"
+            aria-label="搜索连接"
+            onInput={(event) => setQuery(event.currentTarget.value)}
+          />
+        </label>
       </nav>
 
       <div
@@ -863,19 +898,19 @@ function Sidebar(props: SidebarProps) {
         <div class="tree-section">
           <div class="tree-label">
             <ChevronDown size={12} />
-            已连接
-            <span>{connections().length}</span>
+            我的连接
+            <span>{matchedCount()}</span>
           </div>
-          <For each={folders()}>
+          <For each={visibleFolders()}>
             {(folder) => (
-              <div class="tree-group" data-open={openFolders()[folder.id] ? "true" : "false"}>
+              <div class="tree-group" data-open={folderOpen(folder.id) ? "true" : "false"}>
                 <button
                   class="tree-row folder-row"
                   onClick={() => toggleFolder(folder.id)}
-                  aria-expanded={openFolders()[folder.id] ? "true" : "false"}
+                  aria-expanded={folderOpen(folder.id) ? "true" : "false"}
                 >
-                  <ChevronRight size={13} class="chev" classList={{ open: openFolders()[folder.id] }} />
-                  <Show when={openFolders()[folder.id]} fallback={<Folder size={15} />}>
+                  <ChevronRight size={13} class="chev" classList={{ open: folderOpen(folder.id) }} />
+                  <Show when={folderOpen(folder.id)} fallback={<Folder size={15} />}>
                     <FolderOpen size={15} />
                   </Show>
                   <span class="tree-name">{folder.name}</span>
@@ -883,7 +918,7 @@ function Sidebar(props: SidebarProps) {
                     <span class="tree-count">{folderConnections(folder).length}</span>
                   </span>
                 </button>
-                <Show when={openFolders()[folder.id]}>
+                <Show when={folderOpen(folder.id)}>
                   <div class="tree-children">
                     <For each={folderConnections(folder)}>{(conn) => renderConnection(conn, 1)}</For>
                   </div>
@@ -894,6 +929,9 @@ function Sidebar(props: SidebarProps) {
           <For each={ungroupedConnections()}>{(conn) => renderConnection(conn, 0)}</For>
           <Show when={props.backendStatus === "online" && connections().length === 0}>
             <div class="tree-row leaf muted">暂无保存的连接</div>
+          </Show>
+          <Show when={searching() && matchedCount() === 0 && connections().length > 0}>
+            <div class="tree-row leaf muted">没有匹配的连接</div>
           </Show>
         </div>
       </div>
