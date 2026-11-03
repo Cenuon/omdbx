@@ -586,7 +586,11 @@ interface DataTableProps {
 
 function DataTable(props: DataTableProps) {
   return (
-    <div class="grid" role="table">
+    <div
+      class="grid"
+      role="table"
+      style={`--grid-cols: 48px repeat(${Math.max(props.columns.length, 1)}, minmax(150px, 1fr))`}
+    >
       <div class="grid-head" role="row">
         <div class="th num">
           <span class="th-name">#</span>
@@ -598,7 +602,7 @@ function DataTable(props: DataTableProps) {
                 <Show when={column.primary}>
                   <KeyRound size={9} class="key" />
                 </Show>
-                {column.name}
+                <span class="th-text">{column.name}</span>
               </span>
               <span class="th-type">{column.type || "text"}</span>
             </div>

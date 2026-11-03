@@ -906,7 +906,7 @@ kbd {
 .grid-head,
 .grid-row {
   display: grid;
-  grid-template-columns: 48px minmax(96px, 1.05fr) minmax(96px, 0.92fr) 74px 74px 100px minmax(180px, 1.7fr);
+  grid-template-columns: var(--grid-cols, 48px minmax(140px, 1fr));
 }
 .grid-head {
   position: sticky;
@@ -3921,4 +3921,15 @@ html[data-theme="dark"] {
   left: 26px;
   top: 0;
   bottom: 4px;
+}
+
+/* header cells follow the column count set on .grid; long names clip instead of wrapping */
+.th-name {
+  overflow: hidden;
+}
+.th-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
