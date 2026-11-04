@@ -170,6 +170,77 @@ export function getTableDdl(
   return request<string>(`/api/schema/ddl?${params.toString()}`)
 }
 
+export interface TableImportPreview {
+  fileName: string
+  filePath: string
+  sourceRef?: string
+  fileType: string
+  sizeBytes: number
+  columns: string[]
+  rows: Array<Array<string | number | boolean | null>>
+  totalRows: number
+  totalRowsExact: boolean
+}
+
+/** Uploads the file and returns the server-side preview + temp path. */
+export async function previewTableImport(
+  file: File,
+  connectionId: string,
+  database: string,
+): Promise<TableImportPreview> {
+  const form = new FormData()
+  form.append("file", file)
+  form.append("connectionId", connectionId)
+  form.append("database", database)
+  form.append("previewLimit", "50")
+  const response = await fetch("/api/import/preview", { method: "POST", body: form, credentials: "include" })
+  const text = await response.text()
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`
+    try {
+      const body = JSON.parse(text) as { detail?: string; message?: string }
+      message = body.detail || body.message || message
+    } catch {
+      if (text) message = text.slice(0, 300)
+    }
+    throw new Error(message)
+  }
+  return JSON.parse(text) as TableImportPreview
+}
+
+export interface TableImportRequest {
+  importId: string
+  connectionId: string
+  database: string
+  schema: string
+  table: string
+  filePath: string
+  sourceRef?: string
+  mappings: Array<{ sourceColumn: string; targetColumn: string }>
+  mode: "append" | "truncate"
+  createTable: boolean
+  batchSize: number
+  conflictPolicy: "error" | "skip" | "updateExisting"
+  retainSource: boolean
+}
+
+/** Starts the import; progress streams from {@link tableImportProgressUrl}. */
+export async function executeTableImport(payload: TableImportRequest): Promise<string> {
+  const data = await request<{ importId: string }>("/api/import/execute", {
+    method: "POST",
+    body: JSON.stringify({ request: payload }),
+  })
+  return data.importId
+}
+
+export function tableImportProgressUrl(importId: string): string {
+  return `/api/import/progress/${encodeURIComponent(importId)}`
+}
+
+export function cancelTableImport(importId: string): Promise<unknown> {
+  return request("/api/import/cancel", { method: "POST", body: JSON.stringify({ importId }) })
+}
+
 export interface DataGridSaveOptions {
   databaseType?: string
   identifierQuote?: string

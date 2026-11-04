@@ -74,6 +74,7 @@ import {
 } from "lucide-solid"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
 import SettingsView from "./SettingsView"
+import ImportWizard from "./ImportWizard"
 import TableActionDialog, { type SqlActionInput } from "./TableActionDialog"
 import { historyItems, sqlFiles, type GridFont, type RowStyle, type TabItem } from "./data"
 import {
@@ -430,6 +431,12 @@ function Sidebar(props: SidebarProps) {
   } | null>(null)
   const [tableAction, setTableAction] = createSignal<TableActionState | null>(null)
   const [identifierQuotes, setIdentifierQuotes] = createSignal<Record<string, string | null>>({})
+  const [importTarget, setImportTarget] = createSignal<{
+    conn: DbxConnection
+    database: string
+    schema: string
+    table: string
+  } | null>(null)
   const [folderDialog, setFolderDialog] = createSignal<{ kind: "new" | "rename"; id?: string } | null>(null)
   const [folderName, setFolderName] = createSignal("")
   const [sidebarMenu, setSidebarMenu] = createSignal<{ x: number; y: number } | null>(null)
@@ -1053,7 +1060,11 @@ function Sidebar(props: SidebarProps) {
       },
       { label: "设置权限", icon: <Lock size={15} />, onSelect: todo("设置权限") },
       { separator: true },
-      { label: "导入向导…", icon: <Upload size={15} />, onSelect: todo("导入向导") },
+      {
+        label: "导入向导…",
+        icon: <Upload size={15} />,
+        onSelect: () => setImportTarget({ conn, database, schema, table }),
+      },
       {
         label: "导出向导…",
         icon: <Download size={15} />,
@@ -1529,6 +1540,19 @@ function Sidebar(props: SidebarProps) {
             title={menu().table}
             items={tableMenuItems(menu().conn, menu().database, menu().schema, menu().table)}
             onClose={() => setTableMenu(null)}
+          />
+        )}
+      </Show>
+      <Show when={importTarget()}>
+        {(target) => (
+          <ImportWizard
+            conn={target().conn}
+            database={target().database}
+            schema={target().schema}
+            table={target().table}
+            onClose={() => setImportTarget(null)}
+            onToast={props.onToast}
+            onDone={() => void loadTables(target().conn, target().database, true)}
           />
         )}
       </Show>
