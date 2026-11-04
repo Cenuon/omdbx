@@ -7,6 +7,8 @@ export interface MenuItem {
   separator?: boolean
   checked?: boolean
   disabled?: boolean
+  /** destructive action: rendered in red */
+  danger?: boolean
   icon?: JSX.Element
   /** right-aligned muted text, like a count */
   hint?: string
@@ -85,6 +87,7 @@ export default function ContextMenu(props: {
                   classList={{
                     disabled: item.disabled,
                     checked: item.checked,
+                    danger: item.danger,
                     active: !!item.submenu && openSub() === index(),
                   }}
                   role="menuitem"

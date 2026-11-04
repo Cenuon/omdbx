@@ -5117,3 +5117,18 @@ html[data-theme="dark"] .dialog {
 .sidebar .tree-label svg {
   color: var(--muted);
 }
+
+/* destructive context-menu entries */
+.menu-item.danger,
+.menu-item.danger .menu-label,
+.menu-item.danger .menu-icon {
+  color: #dc2626;
+}
+html[data-theme="dark"] .menu-item.danger,
+html[data-theme="dark"] .menu-item.danger .menu-label,
+html[data-theme="dark"] .menu-item.danger .menu-icon {
+  color: #f87171;
+}
+.menu-item.danger:hover:not(.disabled) {
+  background: rgba(220, 38, 38, 0.1);
+}

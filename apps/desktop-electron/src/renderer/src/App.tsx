@@ -1,5 +1,6 @@
 import {
   ArrowLeftRight,
+  ArrowUp,
   ArrowUpDown,
   BookOpen,
   Box,
@@ -391,6 +392,7 @@ function Sidebar(props: SidebarProps) {
   const [stars, setStars] = createSignal<string[]>([])
   const [openFolders, setOpenFolders] = createSignal<Record<string, boolean>>({})
   const [connectionMenu, setConnectionMenu] = createSignal<{ x: number; y: number; conn: DbxConnection } | null>(null)
+  const [folderMenu, setFolderMenu] = createSignal<{ x: number; y: number; folder: SidebarFolder } | null>(null)
   const [folderDialog, setFolderDialog] = createSignal<{ kind: "new" | "rename"; id?: string } | null>(null)
   const [folderName, setFolderName] = createSignal("")
   const [sidebarMenu, setSidebarMenu] = createSignal<{ x: number; y: number } | null>(null)
@@ -711,6 +713,94 @@ function Sidebar(props: SidebarProps) {
     props.onToast(`已关闭 ${list.length} 个连接`)
   }
 
+  function folderOpenCount(folder: SidebarFolder): number {
+    return folderConnections(folder).filter((connection) => connectionOnline(connection)).length
+  }
+
+  /** Expand and connect every connection inside a folder. */
+  async function openFolderConnections(folder: SidebarFolder) {
+    const list = folderConnections(folder)
+    if (list.length === 0) return
+    setOpenFolders((state) => ({ ...state, [folder.id]: true }))
+    for (const connection of list) {
+      setOpenConnections((state) => ({ ...state, [connection.id]: true }))
+      if (!connectionData()[connection.id]) await loadConnection(connection)
+    }
+  }
+
+  async function closeFolderConnections(folder: SidebarFolder) {
+    const list = folderConnections(folder).filter((connection) => connectionOnline(connection))
+    if (list.length === 0) return
+    await Promise.all(list.map((connection) => disconnectDb(connection.id).catch(() => undefined)))
+    setOpenConnections((state) => {
+      const next = { ...state }
+      for (const connection of folderConnections(folder)) next[connection.id] = false
+      return next
+    })
+    props.onToast(`已关闭 ${list.length} 个连接`)
+  }
+
+  function folderMenuItems(folder: SidebarFolder): MenuItem[] {
+    const total = folderConnections(folder).length
+    const open = folderOpenCount(folder)
+    return [
+      {
+        label: "置顶",
+        icon: <ArrowUp size={15} />,
+        disabled: folders()[0]?.id === folder.id,
+        onSelect: () => setFolders((list) => [folder, ...list.filter((item) => item.id !== folder.id)]),
+      },
+      {
+        label: "复制名称",
+        icon: <Copy size={15} />,
+        onSelect: () => {
+          void navigator.clipboard?.writeText(folder.name)
+          props.onToast(`已复制「${folder.name}」`)
+        },
+      },
+      { separator: true },
+      { label: "新建连接", icon: <Plus size={15} />, onSelect: () => props.onNewConnection() },
+      {
+        label: "新建分组…",
+        icon: <FolderPlus size={15} />,
+        onSelect: () => {
+          setFolderName("")
+          setFolderDialog({ kind: "new" })
+        },
+      },
+      {
+        label: "打开分组内连接",
+        hint: `${total}`,
+        disabled: total === 0,
+        onSelect: () => void openFolderConnections(folder),
+      },
+      {
+        label: "关闭分组内连接",
+        hint: `${open}`,
+        disabled: open === 0,
+        onSelect: () => void closeFolderConnections(folder),
+      },
+      { separator: true },
+      {
+        label: "重命名分组",
+        icon: <SquarePen size={15} />,
+        onSelect: () => {
+          setFolderName(folder.name)
+          setFolderDialog({ kind: "rename", id: folder.id })
+        },
+      },
+      { separator: true },
+      {
+        label: "删除分组",
+        danger: true,
+        onSelect: () => {
+          setFolders((list) => list.filter((item) => item.id !== folder.id))
+          props.onToast(`已删除分组「${folder.name}」`)
+        },
+      },
+    ]
+  }
+
   function sidebarMenuItems(): MenuItem[] {
     return [
       { label: "新建连接", icon: <Plus size={15} />, onSelect: () => props.onNewConnection() },
@@ -926,6 +1016,10 @@ function Sidebar(props: SidebarProps) {
                   class="tree-row folder-row"
                   onClick={() => toggleFolder(folder.id)}
                   aria-expanded={folderOpen(folder.id) ? "true" : "false"}
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    setFolderMenu({ x: event.clientX, y: event.clientY, folder })
+                  }}
                 >
                   <Show when={folderOpen(folder.id)} fallback={<Folder size={16} />}>
                     <FolderOpen size={16} />
@@ -1013,6 +1107,17 @@ function Sidebar(props: SidebarProps) {
             title={menu().conn.name}
             items={connectionMenuItems(menu().conn)}
             onClose={() => setConnectionMenu(null)}
+          />
+        )}
+      </Show>
+      <Show when={folderMenu()}>
+        {(menu) => (
+          <ContextMenu
+            x={menu().x}
+            y={menu().y}
+            title={menu().folder.name}
+            items={folderMenuItems(menu().folder)}
+            onClose={() => setFolderMenu(null)}
           />
         )}
       </Show>
