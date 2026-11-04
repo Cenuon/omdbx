@@ -2030,8 +2030,8 @@ function QueryView(props: {
   connections: DbxConnection[]
   databases: string[]
   tables: Array<{ schema: string; name: string }>
-  target: { connectionId: string; database: string; schema: string }
-  onTarget: (patch: Partial<{ connectionId: string; database: string; schema: string }>) => void
+  target: { connectionId: string; database: string; schema: string; table: string }
+  onTarget: (patch: Partial<{ connectionId: string; database: string; schema: string; table: string }>) => void
   onInsert: (text: string) => void
   onRegisterEditor: (api: { insert: (text: string) => void }) => void
   columns: Array<{ name: string; type: string; primary?: boolean }>
@@ -2092,7 +2092,7 @@ function QueryView(props: {
             placeholder: "未选择连接",
             items: () => props.connections.map((item) => ({ value: item.id, label: item.name })),
             ariaLabel: "连接",
-            onChange: (value) => props.onTarget({ connectionId: value, database: "", schema: "" }),
+            onChange: (value) => props.onTarget({ connectionId: value, database: "", schema: "", table: "" }),
           })}
           <span class="ctx-sep">/</span>
           {picker({
@@ -2101,11 +2101,11 @@ function QueryView(props: {
             placeholder: "默认库",
             items: () => props.databases.map((name) => ({ value: name, label: name })),
             ariaLabel: "数据库",
-            onChange: (value) => props.onTarget({ database: value, schema: "" }),
+            onChange: (value) => props.onTarget({ database: value, schema: "", table: "" }),
           })}
           <span class="ctx-sep">/</span>
           {picker({
-            label: () => "选择表",
+            label: () => props.target.table || "选择表",
             value: () => "",
             placeholder: "选择表",
             items: () => props.tables.map((item) => ({ value: tableLabel(item), label: tableLabel(item) })),
@@ -2114,7 +2114,7 @@ function QueryView(props: {
               if (!value) return
               const picked = props.tables.find((item) => tableLabel(item) === value)
               if (picked) {
-                props.onTarget({ schema: picked.schema })
+                props.onTarget({ schema: picked.schema, table: picked.name })
                 props.onInsert(picked.name)
               }
             },
@@ -2647,7 +2647,7 @@ export default function App() {
   /** indexes into browse().rows staged for deletion */
   const [pendingDeletes, setPendingDeletes] = createSignal<number[]>([])
   const [querySql, setQuerySql] = createSignal("")
-  const [queryTarget, setQueryTarget] = createSignal({ connectionId: "", database: "", schema: "" })
+  const [queryTarget, setQueryTarget] = createSignal({ connectionId: "", database: "", schema: "", table: "" })
   const [queryDatabases, setQueryDatabases] = createSignal<string[]>([])
   const [queryTables, setQueryTables] = createSignal<Array<{ schema: string; name: string }>>([])
   const sqlInsert = { current: null as null | ((text: string) => void) }
@@ -2740,26 +2740,33 @@ export default function App() {
 
   /** Point the query toolbar at whatever the sidebar last opened, else the first connection. */
   function seedQueryTarget() {
-    const current = queryTarget()
-    if (current.connectionId && connections().some((item) => item.id === current.connectionId)) return
     const active = activeTarget()
     if (active) {
-      setQueryTarget({ connectionId: active.connection.id, database: active.database, schema: active.schema })
+      setQueryTarget({
+        connectionId: active.connection.id,
+        database: active.database,
+        schema: active.schema,
+        table: active.table,
+      })
       return
     }
+    const current = queryTarget()
+    if (current.connectionId && connections().some((item) => item.id === current.connectionId)) return
     const first = connections()[0]
     if (first) {
       setQueryTarget({
         connectionId: first.id,
         database: first.database ?? "",
         schema: first.default_schema ?? "",
+        table: "",
       })
     }
   }
 
-  // the query toolbar's connection list follows the saved connections
+  // fill an empty toolbar once the saved connections arrive
   createEffect(() => {
     if (connections().length === 0) return
+    if (queryTarget().connectionId) return
     seedQueryTarget()
   })
 
@@ -2858,7 +2865,8 @@ export default function App() {
     setBrowse((state) => ({ ...state, loading: true, error: null }))
     try {
       const { result, columns, sql, quote } = await browseTable(connection, database, schema, table)
-      setQuerySql(`${sql};`)
+      // seed an empty query editor with the browse statement, never overwrite typed SQL
+      if (!querySql().trim()) setQuerySql(`${sql};`)
       setBrowse({
         loading: false,
         quote,
