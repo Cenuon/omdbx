@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show } from "solid-js"
+import { createMemo, createSignal, For, onMount, Show } from "solid-js"
 import {
   ArrowLeft,
   ChevronDown,
@@ -38,6 +38,77 @@ const TABS = [
   { id: "advanced", label: "高级" },
 ] as const
 
+/** Config keys the form edits, so an existing connection round-trips. */
+const FORM_KEYS = [
+  "url_params",
+  "ssl",
+  "ca_cert_path",
+  "client_cert_path",
+  "client_key_path",
+  "read_only",
+  "show_system_schemas",
+  "sidebar_auto_load_all_tables",
+  "connect_timeout_secs",
+  "query_timeout_secs",
+  "idle_timeout_secs",
+  "default_schema",
+]
+
+/** Opaque handle the backend hands back for a stored secret. */
+const SECRET_PREFIX = "__DBX_SAVED_CREDENTIAL__:"
+
+/** Best picker entry for a saved config: driver profile first, then db type. */
+function matchType(config: Record<string, unknown>): DatabaseTypeInfo {
+  const profile = String(config.driver_profile ?? "")
+  const dbType = String(config.db_type ?? "")
+  return (
+    databaseTypes.find((type) => type.key === profile) ??
+    databaseTypes.find((type) => type.key === dbType) ??
+    databaseTypes.find((type) => type.dbType === dbType) ??
+    databaseTypes[0]
+  )
+}
+
+/**
+ * Seed the form from a saved ConnectionConfig. Stored secrets come back as opaque
+ * references, so they are pulled out of the visible fields and only sent again when
+ * the user leaves the field untouched.
+ */
+function editValues(config: Record<string, unknown>, type: DatabaseTypeInfo): {
+  values: Values
+  secrets: Record<string, string>
+} {
+  const values: Values = {}
+  const secrets: Record<string, string> = {}
+  const keys = new Set([...FORM_KEYS, ...connectionFields(type).map((field) => field.key)])
+  for (const key of keys) {
+    const value = config[key]
+    if (value === undefined || value === null) continue
+    if (typeof value === "string" && value.startsWith(SECRET_PREFIX)) {
+      secrets[key] = value
+      continue
+    }
+    values[key] = value as string | number | boolean
+  }
+  const layers = config.transport_layers
+  if (Array.isArray(layers)) {
+    const ssh = layers.find((layer) => (layer as { type?: string })?.type === "ssh") as
+      | Record<string, unknown>
+      | undefined
+    if (ssh) {
+      const secret = String(ssh.password ?? "")
+      if (secret.startsWith(SECRET_PREFIX)) secrets.ssh_password = secret
+      else values.ssh_password = secret
+      values.ssh_enabled = true
+      values.ssh_host = String(ssh.host ?? "")
+      values.ssh_port = Number(ssh.port) || 22
+      values.ssh_user = String(ssh.user ?? "")
+      values.ssh_key_path = String(ssh.key_path ?? "")
+    }
+  }
+  return { values, secrets }
+}
+
 interface SidebarFolder {
   id: string
   name: string
@@ -48,20 +119,27 @@ export default function NewConnectionDialog(props: {
   onClose: () => void
   onCreated: (connection: DbxConnectionInput) => void
   onToast: (message: string) => void
+  /** existing config: the dialog opens on the form prefilled and saves over the same id */
+  editing?: DbxConnectionInput | null
 }) {
-  const id = crypto.randomUUID()
-  const [step, setStep] = createSignal<"pick" | "form">("pick")
+  const editing = props.editing ?? null
+  const id = editing?.id ?? crypto.randomUUID()
+  const initialType = editing ? matchType(editing) : databaseTypes[0]
+  const seeded = editing ? editValues(editing, initialType) : { values: {} as Values, secrets: {} }
+  /** stored secrets the user has not overwritten, replayed on save */
+  const secrets = seeded.secrets
+  const [step, setStep] = createSignal<"pick" | "form">(editing ? "form" : "pick")
   const [tab, setTab] = createSignal<(typeof TABS)[number]["id"]>("connection")
   const [category, setCategory] = createSignal<DatabaseCategory>("sql")
   const [keyword, setKeyword] = createSignal("")
-  const [selected, setSelected] = createSignal<DatabaseTypeInfo>(databaseTypes[0])
+  const [selected, setSelected] = createSignal<DatabaseTypeInfo>(initialType)
 
-  const [name, setName] = createSignal("")
+  const [name, setName] = createSignal(editing ? String(editing.name ?? "") : "")
   const [url, setUrl] = createSignal("")
-  const [values, setValues] = createSignal<Values>({})
-  const [color, setColor] = createSignal("")
-  const [note, setNote] = createSignal("")
-  const [savePassword, setSavePassword] = createSignal(true)
+  const [values, setValues] = createSignal<Values>(seeded.values)
+  const [color, setColor] = createSignal(editing ? String(editing.color ?? "") : "")
+  const [note, setNote] = createSignal(editing ? String(editing.note ?? "") : "")
+  const [savePassword, setSavePassword] = createSignal(editing ? editing.save_password !== false : true)
   const [showPassword, setShowPassword] = createSignal(false)
   const [paramsOpen, setParamsOpen] = createSignal(false)
   const [folders, setFolders] = createSignal<SidebarFolder[]>([])
@@ -100,11 +178,18 @@ export default function NewConnectionDialog(props: {
   async function loadFolders() {
     try {
       const raw = (await loadSidebarLayout()) as { omdbx?: { folders?: SidebarFolder[] } } | null
-      setFolders(raw?.omdbx?.folders ?? [])
+      const list = raw?.omdbx?.folders ?? []
+      setFolders(list)
+      const current = list.find((folder) => folder.connections.includes(id))
+      if (current) setFolderId(current.id)
     } catch {
       setFolders([])
     }
   }
+
+  onMount(() => {
+    if (editing) void loadFolders()
+  })
 
   function setValue(key: string, value: string | number | boolean) {
     setValues((state) => ({ ...state, [key]: value }))
@@ -138,7 +223,7 @@ export default function NewConnectionDialog(props: {
       host: String(current.host ?? ""),
       port: Number(current.port) || 0,
       username: String(current.username ?? ""),
-      password: String(current.password ?? ""),
+      password: String(current.password ?? "") || secrets.password || "",
       save_password: savePassword(),
     }
     // every other control on any tab writes its ConnectionConfig key straight through
@@ -147,7 +232,14 @@ export default function NewConnectionDialog(props: {
       if (value === undefined || value === "" || value === false) continue
       payload[key] = value
     }
+    // untouched stored secrets ride along so the backend can restore them
+    for (const [key, value] of Object.entries(secrets)) {
+      if (key === "ssh_password") continue
+      const current_value = current[key]
+      if (current_value === undefined || current_value === "") payload[key] = value
+    }
     if (color()) payload.color = color()
+    else if (editing) payload.color = null
     if (note().trim()) payload.note = note().trim()
     if (current.ssh_enabled) {
       payload.transport_layers = [
@@ -159,7 +251,7 @@ export default function NewConnectionDialog(props: {
           host: String(current.ssh_host ?? ""),
           port: Number(current.ssh_port) || 22,
           user: String(current.ssh_user ?? ""),
-          password: String(current.ssh_password ?? ""),
+          password: String(current.ssh_password ?? "") || secrets.ssh_password || "",
           key_path: String(current.ssh_key_path ?? ""),
         },
       ]
@@ -273,7 +365,11 @@ export default function NewConnectionDialog(props: {
         <input
           type={field.kind === "password" && !showPassword() ? "password" : "text"}
           value={String(value() ?? "")}
-          placeholder={field.placeholder}
+          placeholder={
+            field.kind === "password" && secrets[field.key] && !value()
+              ? "已保存，留空则保持不变"
+              : field.placeholder
+          }
           onInput={(event) => setValue(field.key, event.currentTarget.value)}
         />
         <Show when={field.kind === "password"}>
@@ -317,7 +413,7 @@ export default function NewConnectionDialog(props: {
         }}
       >
         <header class="dialog-head">
-          <h2>{step() === "pick" ? "新建连接" : "连接配置"}</h2>
+          <h2>{step() === "pick" ? (editing ? "编辑连接" : "新建连接") : "连接配置"}</h2>
           <button class="icon-btn" aria-label="关闭" title="关闭" onClick={props.onClose}>
             <X size={15} />
           </button>

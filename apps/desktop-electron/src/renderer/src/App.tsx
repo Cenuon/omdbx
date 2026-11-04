@@ -350,6 +350,7 @@ interface SidebarProps {
   activeTab: string
   onToggle: () => void
   onNewConnection: () => void
+  onEditConnection: (connection: DbxConnection) => void
   onNewQuery: () => void
   onCommonActions: () => void
   onConnectionsChanged: () => void
@@ -879,7 +880,11 @@ function Sidebar(props: SidebarProps) {
     return [
       { label: "关闭连接", icon: <Power size={15} />, onSelect: () => void closeConnection(connection) },
       { separator: true },
-      { label: "编辑连接…", icon: <SquarePen size={15} />, disabled: true },
+      {
+        label: "编辑连接…",
+        icon: <SquarePen size={15} />,
+        onSelect: () => props.onEditConnection(connection),
+      },
       { label: "新建连接", icon: <Plus size={15} />, onSelect: () => props.onNewConnection() },
       { label: "删除连接", icon: <Trash2 size={15} />, onSelect: () => void removeConnection(connection) },
       { label: "复制连接…", icon: <Copy size={15} />, onSelect: () => void duplicateConnection(connection) },
@@ -2606,6 +2611,7 @@ export default function App() {
   const [selectedId, setSelectedId] = createSignal(3)
   const [newConnectionOpen, setNewConnectionOpen] = createSignal(false)
   const [commonActionsOpen, setCommonActionsOpen] = createSignal(false)
+  const [editConnection, setEditConnection] = createSignal<DbxConnectionInput | null>(null)
   const [connectionReload, setConnectionReload] = createSignal(0)
   const [pendingConnectionId, setPendingConnectionId] = createSignal<string | null>(null)
   const [toast, setToast] = createSignal<string | null>(null)
@@ -3381,6 +3387,7 @@ export default function App() {
           activeTab={activeTab()}
           onToggle={() => setSidebarCollapsed(true)}
           onNewConnection={() => setNewConnectionOpen(true)}
+          onEditConnection={(connection) => setEditConnection(connection as unknown as DbxConnectionInput)}
           onNewQuery={openQuery}
           onCommonActions={() => setCommonActionsOpen(true)}
           onConnectionsChanged={() => void refreshBackend()}
@@ -3519,6 +3526,16 @@ export default function App() {
           onCreated={handleConnectionCreated}
           onToast={showToast}
         />
+      </Show>
+      <Show when={editConnection()}>
+        {(editing) => (
+          <NewConnectionDialog
+            editing={editing()}
+            onClose={() => setEditConnection(null)}
+            onCreated={handleConnectionCreated}
+            onToast={showToast}
+          />
+        )}
       </Show>
       <Show when={commonActionsOpen()}>
         <CommonActionsDialog onClose={() => setCommonActionsOpen(false)} onAction={handleCommonAction} />
