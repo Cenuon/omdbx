@@ -4546,7 +4546,9 @@ html[data-theme="dark"] .dialog {
 /* tab strip: full names, scrolls sideways with the wheel, no scrollbar.
    the add button sits outside the scrolling strip so it stays pinned. */
 .titlebar-tabs-scroll {
-  flex: 1;
+  /* sizes to its tabs so the + sits right after the last one,
+     and shrinks to the available width when the tabs overflow */
+  flex: 0 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;

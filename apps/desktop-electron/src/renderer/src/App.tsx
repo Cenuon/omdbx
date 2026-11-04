@@ -169,9 +169,6 @@ function Titlebar(props: {
       </Show>
 
       <div class="titlebar-tabs">
-        <button class="tab-add" aria-label="新建查询" title="新建查询" onClick={props.onNewQuery}>
-          <Plus size={14} />
-        </button>
         <div
           class="titlebar-tabs-scroll"
           role="tablist"
@@ -221,6 +218,9 @@ function Titlebar(props: {
           )}
           </For>
         </div>
+        <button class="tab-add" aria-label="新建查询" title="新建查询" onClick={props.onNewQuery}>
+          <Plus size={14} />
+        </button>
       </div>
 
       <div class="titlebar-right">
