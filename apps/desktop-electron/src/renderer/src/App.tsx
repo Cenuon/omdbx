@@ -7,6 +7,7 @@ import {
   Boxes,
   Braces,
   CalendarClock,
+  ChartNetwork,
   Check,
   ChevronDown,
   ChevronRight,
@@ -21,6 +22,7 @@ import {
   Eraser,
   EyeOff,
   FileCode2,
+  FileOutput,
   FileText,
   Filter,
   Folder,
@@ -48,7 +50,9 @@ import {
   Plus,
   Power,
   RefreshCw,
+  Scissors,
   Search,
+  ShieldOff,
   Send,
   Settings,
   Settings2,
@@ -61,8 +65,11 @@ import {
   Terminal,
   Trash2,
   Type,
+  Upload,
   WandSparkles,
+  Workflow,
   X,
+  Wrench,
   ZoomIn,
 } from "lucide-solid"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
@@ -393,6 +400,14 @@ function Sidebar(props: SidebarProps) {
   const [openFolders, setOpenFolders] = createSignal<Record<string, boolean>>({})
   const [connectionMenu, setConnectionMenu] = createSignal<{ x: number; y: number; conn: DbxConnection } | null>(null)
   const [folderMenu, setFolderMenu] = createSignal<{ x: number; y: number; folder: SidebarFolder } | null>(null)
+  const [tableMenu, setTableMenu] = createSignal<{
+    x: number
+    y: number
+    conn: DbxConnection
+    database: string
+    schema: string
+    table: string
+  } | null>(null)
   const [folderDialog, setFolderDialog] = createSignal<{ kind: "new" | "rename"; id?: string } | null>(null)
   const [folderName, setFolderName] = createSignal("")
   const [sidebarMenu, setSidebarMenu] = createSignal<{ x: number; y: number } | null>(null)
@@ -479,8 +494,8 @@ function Sidebar(props: SidebarProps) {
     }
   }
 
-  async function loadTables(conn: DbxConnection, database: string) {
-    if (connectionData()[conn.id]?.loaded[database]) return
+  async function loadTables(conn: DbxConnection, database: string, force = false) {
+    if (!force && connectionData()[conn.id]?.loaded[database]) return
     setConnectionData((data) => {
       const current = data[conn.id]
       if (!current) return data
@@ -588,6 +603,10 @@ function Sidebar(props: SidebarProps) {
                 data-key={`${conn.id}|${database}|${row.schema}|${row.table}`}
                 style={{ "padding-left": `${indent}px` }}
                 onClick={() => openTable(conn, database, row.schema, row.table)}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  setTableMenu({ x: event.clientX, y: event.clientY, conn, database, schema: row.schema, table: row.table })
+                }}
               >
                 <Table2 size={16} />
                 <span class="tree-name">{row.table}</span>
@@ -890,6 +909,88 @@ function Sidebar(props: SidebarProps) {
   const TREE_STEP = TREE_ICON
   const TREE_CHEVRON = 14 + TREE_GAP
 
+  function tableMenuItems(conn: DbxConnection, database: string, schema: string, table: string): MenuItem[] {
+    const todo = (label: string) => () => props.onToast(`「${label}」暂未实现`)
+    return [
+      {
+        label: "打开表",
+        icon: <Table2 size={15} />,
+        hint: "⌘O",
+        onSelect: () => openTable(conn, database, schema, table),
+      },
+      {
+        label: "通过配置文件打开表",
+        icon: <FileCode2 size={15} />,
+        submenu: [
+          { label: "最近使用的配置", onSelect: todo("通过配置文件打开表") },
+          { label: "选择配置文件…", onSelect: todo("通过配置文件打开表") },
+        ],
+      },
+      { label: "设计表", icon: <Columns3 size={15} />, hint: "⌘D", onSelect: todo("设计表") },
+      { label: "新建表", icon: <Plus size={15} />, hint: "⌘N", onSelect: todo("新建表") },
+      { label: "删除表", icon: <Trash2 size={15} />, onSelect: todo("删除表") },
+      { label: "清空表", icon: <Eraser size={15} />, onSelect: todo("清空表") },
+      { label: "截断表", icon: <Scissors size={15} />, onSelect: todo("截断表") },
+      {
+        label: "复制表",
+        icon: <Copy size={15} />,
+        submenu: [
+          { label: "复制表结构", onSelect: todo("复制表结构") },
+          { label: "复制结构和数据", onSelect: todo("复制结构和数据") },
+          { label: "复制到其他数据库…", onSelect: todo("复制到其他数据库") },
+        ],
+      },
+      { label: "设置权限", icon: <Lock size={15} />, onSelect: todo("设置权限") },
+      { separator: true },
+      { label: "导入向导…", icon: <Upload size={15} />, onSelect: todo("导入向导") },
+      { label: "导出向导…", icon: <Download size={15} />, onSelect: todo("导出向导") },
+      { label: "数据字典…", icon: <BookOpen size={15} />, onSelect: todo("数据字典") },
+      { label: "数据生成…", icon: <WandSparkles size={15} />, onSelect: todo("数据生成") },
+      { label: "数据脱敏…", icon: <ShieldOff size={15} />, onSelect: todo("数据脱敏") },
+      { separator: true },
+      {
+        label: "转储 SQL 文件",
+        icon: <FileOutput size={15} />,
+        submenu: [
+          { label: "仅结构", onSelect: todo("转储 SQL 文件") },
+          { label: "结构和数据", onSelect: todo("转储 SQL 文件") },
+          { label: "仅数据", onSelect: todo("转储 SQL 文件") },
+        ],
+      },
+      {
+        label: "维护",
+        icon: <Wrench size={15} />,
+        submenu: [
+          { label: "分析表", onSelect: todo("分析表") },
+          { label: "优化表", onSelect: todo("优化表") },
+          { label: "检查表", onSelect: todo("检查表") },
+          { label: "修复表", onSelect: todo("修复表") },
+        ],
+      },
+      { label: "逆向表到模型…", icon: <Workflow size={15} />, onSelect: todo("逆向表到模型") },
+      { label: "创建 BI 工作区…", icon: <ChartNetwork size={15} />, onSelect: todo("创建 BI 工作区") },
+      { separator: true },
+      {
+        label: "管理组",
+        icon: <FolderPlus size={15} />,
+        submenu: [{ label: "新建分组…", onSelect: todo("新建分组") }],
+      },
+      {
+        label: "复制",
+        icon: <Copy size={15} />,
+        onSelect: () => {
+          void navigator.clipboard?.writeText(table)
+          props.onToast(`已复制「${table}」`)
+        },
+      },
+      { label: "粘贴", icon: <ClipboardPaste size={15} />, disabled: true },
+      { label: "共享…", icon: <Share2 size={15} />, onSelect: todo("共享") },
+      { label: "重命名", icon: <SquarePen size={15} />, onSelect: todo("重命名") },
+      { separator: true },
+      { label: "刷新", icon: <RefreshCw size={15} />, hint: "⌘R", onSelect: () => void loadTables(conn, database, true) },
+    ]
+  }
+
   function renderConnection(conn: DbxConnection, depth: number) {
     const icon = connectionIcon(conn.db_type)
     const indent = depth * TREE_STEP + TREE_BASE
@@ -1132,6 +1233,17 @@ function Sidebar(props: SidebarProps) {
             title={menu().folder.name}
             items={folderMenuItems(menu().folder)}
             onClose={() => setFolderMenu(null)}
+          />
+        )}
+      </Show>
+      <Show when={tableMenu()}>
+        {(menu) => (
+          <ContextMenu
+            x={menu().x}
+            y={menu().y}
+            title={menu().table}
+            items={tableMenuItems(menu().conn, menu().database, menu().schema, menu().table)}
+            onClose={() => setTableMenu(null)}
           />
         )}
       </Show>
