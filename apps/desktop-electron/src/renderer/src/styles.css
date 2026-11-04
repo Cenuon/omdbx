@@ -5337,3 +5337,58 @@ html[data-theme="dark"] {
   --sql-function: #82aaff;
   --sql-operator: #89ddff;
 }
+
+/* ---------- SQL autocomplete popup, styled like the app's menus ----------
+   CodeMirror injects its own theme after this file, so every rule repeats the
+   .cm-tooltip class to win on specificity. */
+.cm-tooltip.cm-tooltip-autocomplete {
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow:
+    0 16px 32px -12px rgba(20, 20, 16, 0.18),
+    0 2px 6px rgba(20, 20, 16, 0.06);
+  overflow: hidden;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul {
+  max-height: 264px;
+  font-family: var(--grid-font, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12.5px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul::-webkit-scrollbar {
+  display: none;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li {
+  padding: 4px 8px;
+  border-radius: 5px;
+  color: var(--ink-2);
+  line-height: 1.65;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+/* the stock emoji icons clash with the rest of the UI */
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon {
+  display: none;
+}
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionLabel {
+  flex: 1;
+}
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionMatchedText {
+  text-decoration: none;
+  font-weight: 600;
+  color: var(--accent);
+}
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionDetail {
+  margin-left: 10px;
+  color: var(--faint);
+  font-size: 11px;
+  font-style: normal;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionDetail {
+  color: var(--muted);
+}
