@@ -481,7 +481,7 @@ kbd {
   gap: 6px;
   padding-right: 7px;
   border-radius: 5px;
-  color: var(--ink-2);
+  color: var(--ink);
   font-size: 13px;
   text-align: left;
   transition: background 120ms ease, color 120ms ease;
@@ -2718,7 +2718,7 @@ html[data-theme="dark"] .run-btn:hover {
   gap: 8px;
   padding: 0 8px;
   border-radius: 6px;
-  color: var(--muted);
+  color: var(--ink);
   font-size: 13px;
   text-align: left;
   transition: background 120ms ease, color 120ms ease;
@@ -2728,7 +2728,7 @@ html[data-theme="dark"] .run-btn:hover {
   color: var(--ink);
 }
 .side-nav-row svg {
-  color: var(--muted);
+  color: var(--ink);
   flex: 0 0 auto;
 }
 .side-nav-row:hover svg {
