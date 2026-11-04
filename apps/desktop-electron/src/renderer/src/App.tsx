@@ -74,15 +74,20 @@ import {
 } from "lucide-solid"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
 import SettingsView from "./SettingsView"
+import TableActionDialog, { type SqlActionInput } from "./TableActionDialog"
 import { historyItems, sqlFiles, type GridFont, type RowStyle, type TabItem } from "./data"
 import {
   browseTable,
   connectDb,
   disconnectDb,
   executeQuery,
+  quoteIdentifier,
   getConnections,
+  getColumns,
   getDatabases,
+  getIdentifierQuote,
   getSchemas,
+  getTableDdl,
   getTables,
   loadSidebarLayout,
   prepareDataGridSave,
@@ -360,6 +365,21 @@ interface SidebarFolder {
   connections: string[]
 }
 
+interface TableActionState {
+  conn: DbxConnection
+  database: string
+  title: string
+  hint?: string
+  danger?: boolean
+  confirmLabel?: string
+  inputs?: SqlActionInput[]
+  build?: (values: Record<string, string>) => string
+  sql?: string
+  editable?: boolean
+  /** reload the table list once the statement ran */
+  refresh: boolean
+}
+
 const CONNECTION_COLORS: Array<{ value: string | null; color: string }> = [
   { value: "#e5534b", color: "#e5534b" },
   { value: "#e08c3c", color: "#e08c3c" },
@@ -408,6 +428,8 @@ function Sidebar(props: SidebarProps) {
     schema: string
     table: string
   } | null>(null)
+  const [tableAction, setTableAction] = createSignal<TableActionState | null>(null)
+  const [identifierQuotes, setIdentifierQuotes] = createSignal<Record<string, string | null>>({})
   const [folderDialog, setFolderDialog] = createSignal<{ kind: "new" | "rename"; id?: string } | null>(null)
   const [folderName, setFolderName] = createSignal("")
   const [sidebarMenu, setSidebarMenu] = createSignal<{ x: number; y: number } | null>(null)
@@ -911,6 +933,33 @@ function Sidebar(props: SidebarProps) {
 
   function tableMenuItems(conn: DbxConnection, database: string, schema: string, table: string): MenuItem[] {
     const todo = (label: string) => () => props.onToast(`「${label}」暂未实现`)
+    const action = (
+      make: (q: (name: string) => string) => Omit<TableActionState, "conn" | "database">,
+      refresh = true,
+    ) => () => void prepareTableAction(conn, database, make, refresh)
+    const nameInput = (initial: string) => [{ key: "name", label: "新表名", initial }]
+    const copyOrRename = (mode: "rename" | "schema" | "data") =>
+      action((q) => {
+        const target = qualifiedName(q, schema, database, table)
+        if (mode === "rename") {
+          return {
+            title: "重命名表",
+            hint: "直接修改表名。",
+            confirmLabel: "重命名",
+            inputs: nameInput(table),
+            build: (values) => `ALTER TABLE ${target} RENAME TO ${q(values.name.trim())}`,
+          }
+        }
+        const full = mode === "data"
+        return {
+          title: full ? "复制结构和数据" : "复制表结构",
+          hint: "会创建一个新表，原表保留。",
+          confirmLabel: "复制",
+          inputs: nameInput(full ? `${table}_copy_full` : `${table}_copy`),
+          build: (values) =>
+            `CREATE TABLE ${q(values.name.trim())} AS SELECT * FROM ${target}${full ? "" : " WHERE 1 = 0"}`,
+        }
+      })
     return [
       {
         label: "打开表",
@@ -926,25 +975,95 @@ function Sidebar(props: SidebarProps) {
           { label: "选择配置文件…", onSelect: todo("通过配置文件打开表") },
         ],
       },
-      { label: "设计表", icon: <Columns3 size={15} />, hint: "⌘D", onSelect: todo("设计表") },
-      { label: "新建表", icon: <Plus size={15} />, hint: "⌘N", onSelect: todo("新建表") },
-      { label: "删除表", icon: <Trash2 size={15} />, onSelect: todo("删除表") },
-      { label: "清空表", icon: <Eraser size={15} />, onSelect: todo("清空表") },
-      { label: "截断表", icon: <Scissors size={15} />, onSelect: todo("截断表") },
+      {
+        label: "设计表",
+        icon: <Columns3 size={15} />,
+        hint: "⌘D",
+        onSelect: () => void editTableDdl(conn, database, schema, table),
+      },
+      {
+        label: "新建表",
+        icon: <Plus size={15} />,
+        hint: "⌘N",
+        onSelect: action((q) => ({
+          title: "新建表",
+          hint: "编辑下面的建表语句后执行。",
+          confirmLabel: "创建",
+          editable: true,
+          sql: `CREATE TABLE ${q("new_table")} (\n  id INTEGER PRIMARY KEY,\n  name VARCHAR(255) NOT NULL\n)`,
+        })),
+      },
+      {
+        label: "删除表",
+        icon: <Trash2 size={15} />,
+        danger: true,
+        onSelect: action((q) => ({
+          title: `删除表 ${table}`,
+          hint: "表结构和数据都会被删除，无法撤销。",
+          confirmLabel: "删除",
+          danger: true,
+          sql: `DROP TABLE ${qualifiedName(q, schema, database, table)}`,
+        })),
+      },
+      {
+        label: "清空表",
+        icon: <Eraser size={15} />,
+        danger: true,
+        onSelect: action((q) => ({
+          title: `清空表 ${table}`,
+          hint: "删除全部数据行，保留表结构。",
+          confirmLabel: "清空",
+          danger: true,
+          sql: `DELETE FROM ${qualifiedName(q, schema, database, table)}`,
+        })),
+      },
+      {
+        label: "截断表",
+        icon: <Scissors size={15} />,
+        danger: true,
+        onSelect: action((q) => ({
+          title: `截断表 ${table}`,
+          hint: "清空数据并重置自增计数器，无法撤销。",
+          confirmLabel: "截断",
+          danger: true,
+          sql: `TRUNCATE TABLE ${qualifiedName(q, schema, database, table)}`,
+        })),
+      },
       {
         label: "复制表",
         icon: <Copy size={15} />,
         submenu: [
-          { label: "复制表结构", onSelect: todo("复制表结构") },
-          { label: "复制结构和数据", onSelect: todo("复制结构和数据") },
-          { label: "复制到其他数据库…", onSelect: todo("复制到其他数据库") },
+          { label: "复制表结构", onSelect: copyOrRename("schema") },
+          { label: "复制结构和数据", onSelect: copyOrRename("data") },
+          {
+            label: "复制到其他数据库…",
+            onSelect: action((q) => ({
+              title: "复制到其他数据库",
+              hint: "目标库必须已存在。",
+              confirmLabel: "复制",
+              inputs: [
+                { key: "database", label: "目标数据库" },
+                { key: "name", label: "新表名", initial: table },
+              ],
+              build: (values) =>
+                `CREATE TABLE ${q(values.database.trim())}.${q(values.name.trim())} AS SELECT * FROM ${qualifiedName(q, schema, database, table)}`,
+            })),
+          },
         ],
       },
       { label: "设置权限", icon: <Lock size={15} />, onSelect: todo("设置权限") },
       { separator: true },
       { label: "导入向导…", icon: <Upload size={15} />, onSelect: todo("导入向导") },
-      { label: "导出向导…", icon: <Download size={15} />, onSelect: todo("导出向导") },
-      { label: "数据字典…", icon: <BookOpen size={15} />, onSelect: todo("数据字典") },
+      {
+        label: "导出向导…",
+        icon: <Download size={15} />,
+        onSelect: () => void exportTableCsv(conn, database, schema, table),
+      },
+      {
+        label: "数据字典…",
+        icon: <BookOpen size={15} />,
+        onSelect: () => void exportDataDictionary(conn, database, schema, table),
+      },
       { label: "数据生成…", icon: <WandSparkles size={15} />, onSelect: todo("数据生成") },
       { label: "数据脱敏…", icon: <ShieldOff size={15} />, onSelect: todo("数据脱敏") },
       { separator: true },
@@ -952,19 +1071,19 @@ function Sidebar(props: SidebarProps) {
         label: "转储 SQL 文件",
         icon: <FileOutput size={15} />,
         submenu: [
-          { label: "仅结构", onSelect: todo("转储 SQL 文件") },
-          { label: "结构和数据", onSelect: todo("转储 SQL 文件") },
-          { label: "仅数据", onSelect: todo("转储 SQL 文件") },
+          { label: "仅结构", onSelect: () => void dumpTableSql(conn, database, schema, table, "schema") },
+          { label: "结构和数据", onSelect: () => void dumpTableSql(conn, database, schema, table, "both") },
+          { label: "仅数据", onSelect: () => void dumpTableSql(conn, database, schema, table, "data") },
         ],
       },
       {
         label: "维护",
         icon: <Wrench size={15} />,
         submenu: [
-          { label: "分析表", onSelect: todo("分析表") },
-          { label: "优化表", onSelect: todo("优化表") },
-          { label: "检查表", onSelect: todo("检查表") },
-          { label: "修复表", onSelect: todo("修复表") },
+          { label: "分析表", onSelect: maintenance("ANALYZE TABLE", "分析") },
+          { label: "优化表", onSelect: maintenance("OPTIMIZE TABLE", "优化") },
+          { label: "检查表", onSelect: maintenance("CHECK TABLE", "检查") },
+          { label: "修复表", onSelect: maintenance("REPAIR TABLE", "修复") },
         ],
       },
       { label: "逆向表到模型…", icon: <Workflow size={15} />, onSelect: todo("逆向表到模型") },
@@ -973,7 +1092,15 @@ function Sidebar(props: SidebarProps) {
       {
         label: "管理组",
         icon: <FolderPlus size={15} />,
-        submenu: [{ label: "新建分组…", onSelect: todo("新建分组") }],
+        submenu: [
+          {
+            label: "新建分组…",
+            onSelect: () => {
+              setFolderName("")
+              setFolderDialog({ kind: "new" })
+            },
+          },
+        ],
       },
       {
         label: "复制",
@@ -985,10 +1112,168 @@ function Sidebar(props: SidebarProps) {
       },
       { label: "粘贴", icon: <ClipboardPaste size={15} />, disabled: true },
       { label: "共享…", icon: <Share2 size={15} />, onSelect: todo("共享") },
-      { label: "重命名", icon: <SquarePen size={15} />, onSelect: todo("重命名") },
+      {
+        label: "重命名",
+        icon: <SquarePen size={15} />,
+        onSelect: copyOrRename("rename"),
+      },
       { separator: true },
       { label: "刷新", icon: <RefreshCw size={15} />, hint: "⌘R", onSelect: () => void loadTables(conn, database, true) },
     ]
+
+    function maintenance(prefix: string, label: string) {
+      return action((q) => ({
+        title: `${label}表 ${table}`,
+        confirmLabel: label,
+        sql: `${prefix} ${qualifiedName(q, schema, database, table)}`,
+      }))
+    }
+  }
+
+  /** `schema.table` when the schema is not just the database name. */
+  function qualifiedName(q: (name: string) => string, schema: string, database: string, table: string): string {
+    return schema && schema !== database ? `${q(schema)}.${q(table)}` : q(table)
+  }
+
+  async function quoteFor(conn: DbxConnection, database: string): Promise<string | null> {
+    const cached = identifierQuotes()[conn.id]
+    if (cached !== undefined) return cached
+    const quote = await getIdentifierQuote(conn.id, database).catch(() => null)
+    setIdentifierQuotes((state) => ({ ...state, [conn.id]: quote }))
+    return quote
+  }
+
+  async function prepareTableAction(
+    conn: DbxConnection,
+    database: string,
+    make: (q: (name: string) => string) => Omit<TableActionState, "conn" | "database" | "refresh">,
+    refresh = true,
+  ) {
+    try {
+      const remote = await quoteFor(conn, database)
+      const q = (name: string) => quoteIdentifier(conn.db_type, remote, name)
+      setTableAction({ conn, database, refresh, ...make(q) })
+    } catch (error) {
+      props.onToast(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  async function editTableDdl(conn: DbxConnection, database: string, schema: string, table: string) {
+    try {
+      const ddl = await getTableDdl(conn.id, database, schema, table)
+      setTableAction({
+        conn,
+        database,
+        refresh: true,
+        title: `设计表 ${table}`,
+        hint: "下面是服务端生成的建表语句，改完直接执行。",
+        confirmLabel: "执行",
+        editable: true,
+        sql: ddl,
+      })
+    } catch (error) {
+      props.onToast(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  function downloadText(filename: string, text: string, mime = "text/plain;charset=utf-8") {
+    const url = URL.createObjectURL(new Blob([text], { type: mime }))
+    const link = document.createElement("a")
+    link.href = url
+    link.download = filename
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  function toCsv(result: DbxQueryResult): string {
+    const escape = (value: unknown) => {
+      const text = value === null || value === undefined ? "" : String(value)
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+    }
+    const head = result.columns.map(escape).join(",")
+    const body = result.rows.map((row) => row.map(escape).join(",")).join("\n")
+    return body ? `${head}\n${body}` : head
+  }
+
+  function sqlLiteral(value: unknown): string {
+    if (value === null || value === undefined) return "NULL"
+    if (typeof value === "number" || typeof value === "boolean") return String(value)
+    return `'${String(value).replace(/'/g, "''")}'`
+  }
+
+  function toInserts(conn: DbxConnection, remote: string | null, database: string, schema: string, table: string, result: DbxQueryResult): string {
+    const q = (name: string) => quoteIdentifier(conn.db_type, remote, name)
+    const target = qualifiedName(q, schema, database, table)
+    const columns = result.columns.map(q).join(", ")
+    return result.rows
+      .map((row) => `INSERT INTO ${target} (${columns}) VALUES (${row.map(sqlLiteral).join(", ")});`)
+      .join("\n")
+  }
+
+  async function exportTableCsv(conn: DbxConnection, database: string, schema: string, table: string) {
+    try {
+      const { result } = await browseTable(conn, database, schema, table)
+      downloadText(`${table}.csv`, toCsv(result), "text/csv;charset=utf-8")
+      props.onToast(`已导出「${table}」${result.rows.length} 行`)
+    } catch (error) {
+      props.onToast(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  async function exportDataDictionary(conn: DbxConnection, database: string, schema: string, table: string) {
+    try {
+      const columns = await getColumns(conn.id, database, schema, table)
+      const lines = [
+        `# ${table}`,
+        "",
+        `- 连接：${conn.name}`,
+        `- 数据库：${database}`,
+        schema ? `- Schema：${schema}` : "",
+        "",
+        "| 字段 | 类型 | 允许为空 | 主键 |",
+        "| --- | --- | --- | --- |",
+        ...columns.map(
+          (column) =>
+            `| ${column.name} | ${column.data_type} | ${column.is_nullable === false ? "否" : "是"} | ${column.is_primary_key ? "是" : ""} |`,
+        ),
+        "",
+      ].filter((line) => line !== "")
+      downloadText(`${table}.md`, lines.join("\n"), "text/markdown;charset=utf-8")
+      props.onToast(`已生成「${table}」数据字典`)
+    } catch (error) {
+      props.onToast(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  async function dumpTableSql(
+    conn: DbxConnection,
+    database: string,
+    schema: string,
+    table: string,
+    mode: "schema" | "data" | "both",
+  ) {
+    try {
+      const remote = await quoteFor(conn, database)
+      const parts: string[] = []
+      if (mode !== "data") parts.push(`${(await getTableDdl(conn.id, database, schema, table)).trim()};`)
+      if (mode !== "schema") {
+        const { result } = await browseTable(conn, database, schema, table)
+        parts.push(toInserts(conn, remote, database, schema, table, result))
+      }
+      downloadText(`${table}.sql`, parts.filter(Boolean).join("\n\n"))
+      props.onToast(`已导出「${table}」${mode === "data" ? "数据" : mode === "schema" ? "结构" : "结构和数据"}`)
+    } catch (error) {
+      props.onToast(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  async function runTableAction(sql: string): Promise<string> {
+    const action = tableAction()
+    if (!action) return ""
+    const result = await executeQuery(action.conn.id, action.database, sql)
+    if (result.error?.message) throw new Error(result.error.message)
+    if (action.refresh) await loadTables(action.conn, action.database, true)
+    return result.affected_rows ? `影响 ${result.affected_rows} 行` : "执行完成"
   }
 
   function renderConnection(conn: DbxConnection, depth: number) {
@@ -1244,6 +1529,22 @@ function Sidebar(props: SidebarProps) {
             title={menu().table}
             items={tableMenuItems(menu().conn, menu().database, menu().schema, menu().table)}
             onClose={() => setTableMenu(null)}
+          />
+        )}
+      </Show>
+      <Show when={tableAction()}>
+        {(action) => (
+          <TableActionDialog
+            title={action().title}
+            hint={action().hint}
+            danger={action().danger}
+            confirmLabel={action().confirmLabel}
+            inputs={action().inputs}
+            build={action().build}
+            sql={action().sql}
+            editable={action().editable}
+            onClose={() => setTableAction(null)}
+            onRun={runTableAction}
           />
         )}
       </Show>

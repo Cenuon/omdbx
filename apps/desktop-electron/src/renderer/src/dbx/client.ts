@@ -159,6 +159,17 @@ export function getIdentifierQuote(connectionId: string, database?: string): Pro
   })
 }
 
+/** Table DDL as the server would emit it. */
+export function getTableDdl(
+  connectionId: string,
+  database: string,
+  schema: string,
+  table: string,
+): Promise<string> {
+  const params = new URLSearchParams({ connection_id: connectionId, database, schema, table })
+  return request<string>(`/api/schema/ddl?${params.toString()}`)
+}
+
 export interface DataGridSaveOptions {
   databaseType?: string
   identifierQuote?: string
@@ -194,7 +205,7 @@ export function prepareDataGridSave(options: DataGridSaveOptions): Promise<DataG
  * The backend only reports the quote for a few drivers, so fall back to the
  * dialect convention: backticks for MySQL, brackets for SQL Server, quotes elsewhere.
  */
-function quoteIdentifier(dbType: string, remote: string | null, name: string): string {
+export function quoteIdentifier(dbType: string, remote: string | null, name: string): string {
   if (dbType === "sqlserver") return `[${name.replace(/]/g, "]]")}]`
   const quote = remote ?? (dbType === "mysql" ? "`" : '"')
   return `${quote}${name.split(quote).join(quote + quote)}${quote}`
