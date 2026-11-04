@@ -5106,3 +5106,14 @@ html[data-theme="dark"] .dialog {
   border-radius: 50%;
   background: #22c55e;
 }
+
+/* 我的连接 header: breathing room above, no icon, faded text */
+.sidebar .tree-section {
+  margin-top: 40px;
+}
+.sidebar .tree-label {
+  color: var(--muted);
+}
+.sidebar .tree-label svg {
+  color: var(--muted);
+}

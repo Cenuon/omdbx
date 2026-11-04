@@ -909,7 +909,6 @@ function Sidebar(props: SidebarProps) {
       >
         <div class="tree-section">
           <div class="tree-label">
-            <Database size={16} />
             我的连接
             <button
               class="tree-locate"
