@@ -2044,6 +2044,7 @@ function QueryView(props: {
   sql: string
   onSqlChange: (sql: string) => void
   onRun: () => void
+  onRunStatement: (sql: string) => void
   onFormat: () => void
   onExplain: () => void
   rowStyle: RowStyle
@@ -2139,6 +2140,7 @@ function QueryView(props: {
           value={props.sql}
           onChange={props.onSqlChange}
           onRun={props.onRun}
+          onRunStatement={props.onRunStatement}
           register={props.onRegisterEditor}
         />
       </div>
@@ -3434,14 +3436,14 @@ export default function App() {
     updateColumnView({ hidden: hidden.includes(name) ? hidden.filter((item) => item !== name) : [...hidden, name] })
   }
 
-  async function runQuery(prefix = "") {
+  async function runQuery(prefix = "", explicit?: string) {
     const target = queryTarget()
     if (!target.connectionId) {
       showToast("先在工具栏选择一个连接")
       return
     }
-    // with several statements in the buffer, run just the one under the cursor
-    const underCursor = sqlStatement.current?.() ?? ""
+    // an explicit statement (gutter button) wins, then the selection / cursor statement
+    const underCursor = explicit ?? sqlStatement.current?.() ?? ""
     const statement = underCursor.trim() || querySql().trim()
     if (!statement) {
       showToast("请输入 SQL")
@@ -3689,6 +3691,7 @@ export default function App() {
                       sql={querySql()}
                       onSqlChange={setQuerySql}
                       onRun={() => void runQuery()}
+                      onRunStatement={(sql) => void runQuery("", sql)}
                       onFormat={formatSql}
                       onExplain={explainQuery}
                       rowStyle={rowStyle()}

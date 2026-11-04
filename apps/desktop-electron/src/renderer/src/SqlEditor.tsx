@@ -1,11 +1,111 @@
 import { createEffect, onCleanup, onMount } from "solid-js"
 import { EditorState } from "@codemirror/state"
-import { EditorView, keymap } from "@codemirror/view"
+import { EditorView, GutterMarker, gutter, keymap } from "@codemirror/view"
 import { acceptCompletion } from "@codemirror/autocomplete"
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language"
 import { basicSetup } from "codemirror"
 import { sql } from "@codemirror/lang-sql"
 import { tags } from "@lezer/highlight"
+
+interface StatementSpan {
+  start: number
+  end: number
+}
+
+/** Statement ranges, ignoring `;` inside strings and comments. */
+function statementSpans(text: string): StatementSpan[] {
+  const spans: StatementSpan[] = []
+  let start = 0
+  let i = 0
+  while (i < text.length) {
+    const char = text[i]
+    if (char === "'" || char === '"' || char === "`") {
+      const quote = char
+      i += 1
+      while (i < text.length) {
+        if (text[i] === quote) {
+          if (text[i + 1] === quote) {
+            i += 2
+            continue
+          }
+          i += 1
+          break
+        }
+        i += 1
+      }
+      continue
+    }
+    if (char === "-" && text[i + 1] === "-") {
+      const newline = text.indexOf("\n", i)
+      i = newline === -1 ? text.length : newline + 1
+      continue
+    }
+    if (char === "/" && text[i + 1] === "*") {
+      const close = text.indexOf("*/", i + 2)
+      i = close === -1 ? text.length : close + 2
+      continue
+    }
+    if (char === ";") {
+      spans.push({ start, end: i })
+      start = i + 1
+    }
+    i += 1
+  }
+  spans.push({ start, end: text.length })
+  return spans
+}
+
+/**
+ * The statement under the cursor, so a buffer with several statements runs the
+ * one the user is looking at.
+ */
+function statementAt(text: string, position: number): string {
+  const spans = statementSpans(text)
+  const hit = spans.find((span) => position >= span.start && position <= span.end)
+  const picked = hit ? text.slice(hit.start, hit.end).trim() : ""
+  if (picked) return picked
+  // cursor sits in whitespace (e.g. right after the final `;`) — use the statement before it
+  for (let index = spans.length - 1; index >= 0; index -= 1) {
+    if (spans[index].end >= position) continue
+    const candidate = text.slice(spans[index].start, spans[index].end).trim()
+    if (candidate) return candidate
+  }
+  return text.trim()
+}
+
+const PLAY_ICON =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="10" height="10" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>'
+
+/** One play button in the gutter, pinned to the first line of a statement. */
+class RunStatementMarker extends GutterMarker {
+  constructor(private readonly statement: string, private readonly run: (sql: string) => void) {
+    super()
+  }
+
+  toDOM(): HTMLElement {
+    const button = document.createElement("button")
+    button.type = "button"
+    button.className = "cm-run-btn"
+    button.title = "执行这条语句"
+    button.setAttribute("aria-label", "执行这条语句")
+    button.innerHTML = PLAY_ICON
+    button.addEventListener("mousedown", (event) => event.preventDefault())
+    button.addEventListener("click", (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      this.run(this.statement)
+    })
+    return button
+  }
+}
+
+class RunMarkerSpacer extends GutterMarker {
+  toDOM(): HTMLElement {
+    const span = document.createElement("span")
+    span.className = "cm-run-spacer"
+    return span
+  }
+}
 
 /**
  * Syntax colours read from CSS variables, so light/dark follow the app theme
@@ -61,66 +161,12 @@ const appTheme = EditorView.theme({
   },
 })
 
-/**
- * The statement under the cursor (or the selection), so a buffer with several
- * statements runs the one the user is looking at. Skips strings and comments
- * when looking for `;`.
- */
-function statementAt(text: string, position: number): string {
-  const spans: Array<{ start: number; end: number }> = []
-  let start = 0
-  let i = 0
-  while (i < text.length) {
-    const char = text[i]
-    if (char === "'" || char === '"' || char === "`") {
-      const quote = char
-      i += 1
-      while (i < text.length) {
-        if (text[i] === quote) {
-          if (text[i + 1] === quote) {
-            i += 2
-            continue
-          }
-          i += 1
-          break
-        }
-        i += 1
-      }
-      continue
-    }
-    if (char === "-" && text[i + 1] === "-") {
-      const newline = text.indexOf("\n", i)
-      i = newline === -1 ? text.length : newline + 1
-      continue
-    }
-    if (char === "/" && text[i + 1] === "*") {
-      const close = text.indexOf("*/", i + 2)
-      i = close === -1 ? text.length : close + 2
-      continue
-    }
-    if (char === ";") {
-      spans.push({ start, end: i })
-      start = i + 1
-    }
-    i += 1
-  }
-  spans.push({ start, end: text.length })
-  const hit = spans.find((span) => position >= span.start && position <= span.end)
-  const picked = hit ? text.slice(hit.start, hit.end).trim() : ""
-  if (picked) return picked
-  // cursor sits in whitespace (e.g. right after the final `;`) — use the statement before it
-  for (let index = spans.length - 1; index >= 0; index -= 1) {
-    if (spans[index].end >= position) continue
-    const candidate = text.slice(spans[index].start, spans[index].end).trim()
-    if (candidate) return candidate
-  }
-  return text.trim()
-}
-
 export default function SqlEditor(props: {
   value: string
   onChange: (value: string) => void
   onRun: () => void
+  /** run one specific statement, from its gutter button */
+  onRunStatement: (sql: string) => void
   /** hands back an imperative handle for the toolbar and the run action */
   register?: (api: { insert: (text: string) => void; statement: () => string }) => void
 }) {
@@ -138,6 +184,23 @@ export default function SqlEditor(props: {
             { key: "Tab", run: acceptCompletion },
             { key: "Tab", run: () => true },
           ]),
+          gutter({
+            class: "cm-run-gutter",
+            lineMarker: (view, line) => {
+              const doc = view.state.doc.toString()
+              for (const span of statementSpans(doc)) {
+                const text = doc.slice(span.start, span.end)
+                const offset = text.search(/\S/)
+                if (offset < 0) continue
+                const anchor = span.start + offset
+                if (anchor < line.from || anchor > line.to) continue
+                return new RunStatementMarker(text.trim(), props.onRunStatement)
+              }
+              return null
+            },
+            lineMarkerChange: (update) => update.docChanged,
+            initialSpacer: () => new RunMarkerSpacer(),
+          }),
           basicSetup,
           sql(),
           syntaxHighlighting(highlight),

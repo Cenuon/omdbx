@@ -5392,3 +5392,33 @@ html[data-theme="dark"] {
 .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionDetail {
   color: var(--muted);
 }
+
+/* per-statement run button in the SQL editor gutter */
+.cm-run-gutter {
+  width: 24px;
+  padding-right: 1px;
+}
+.cm-run-gutter .cm-gutterElement {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cm-run-btn {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--faint);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.cm-run-btn:hover {
+  background: var(--surface-3);
+  color: var(--accent);
+}
+.cm-run-spacer {
+  display: inline-block;
+  width: 18px;
+  height: 1px;
+}
