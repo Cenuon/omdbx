@@ -74,6 +74,7 @@ import {
 } from "lucide-solid"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
 import SettingsView from "./SettingsView"
+import SqlEditor from "./SqlEditor"
 import ImportWizard from "./ImportWizard"
 import TableActionDialog, { type SqlActionInput } from "./TableActionDialog"
 import { historyItems, sqlFiles, type GridFont, type RowStyle, type TabItem } from "./data"
@@ -2026,9 +2027,11 @@ function QueryView(props: {
   selectedKey: string | null
   onSelect: (key: string) => void
   onToast: (message: string) => void
-  connectionName: string
-  database: string
-  schema: string
+  connections: DbxConnection[]
+  databases: string[]
+  schemas: string[]
+  target: { connectionId: string; database: string; schema: string }
+  onTarget: (patch: Partial<{ connectionId: string; database: string; schema: string }>) => void
   columns: Array<{ name: string; type: string; primary?: boolean }>
   rows: (string | number | boolean | null)[][]
   rowCount: number
@@ -2039,32 +2042,62 @@ function QueryView(props: {
   sql: string
   onSqlChange: (sql: string) => void
   onRun: () => void
+  onFormat: () => void
+  onExplain: () => void
   rowStyle: RowStyle
 }) {
+  const connectionName = () =>
+    props.connections.find((item) => item.id === props.target.connectionId)?.name ?? "未选择连接"
+
   return (
     <section class="view query-view">
       <div class="editor-pane">
         <div class="editor-toolbar">
-          <button class="ctx-btn">
+          <span class="ctx-pick">
             <Database size={13} />
-            {props.connectionName}
+            <select
+              value={props.target.connectionId}
+              aria-label="连接"
+              onChange={(event) =>
+                props.onTarget({ connectionId: event.currentTarget.value, database: "", schema: "" })
+              }
+            >
+              <option value="">未选择连接</option>
+              <For each={props.connections}>{(item) => <option value={item.id}>{item.name}</option>}</For>
+            </select>
             <ChevronDown size={10} />
-          </button>
+          </span>
           <span class="ctx-sep">/</span>
-          <button class="ctx-btn">
-            {props.database}
+          <span class="ctx-pick">
+            <select
+              value={props.target.database}
+              aria-label="数据库"
+              onChange={(event) =>
+                props.onTarget({ database: event.currentTarget.value, schema: "" })
+              }
+            >
+              <option value="">默认库</option>
+              <For each={props.databases}>{(name) => <option value={name}>{name}</option>}</For>
+            </select>
             <ChevronDown size={10} />
-          </button>
+          </span>
           <span class="ctx-sep">/</span>
-          <button class="ctx-btn">
-            {props.schema}
+          <span class="ctx-pick">
+            <select
+              value={props.target.schema}
+              aria-label="Schema"
+              onChange={(event) => props.onTarget({ schema: event.currentTarget.value })}
+            >
+              <option value="">默认 Schema</option>
+              <For each={props.schemas}>{(name) => <option value={name}>{name}</option>}</For>
+            </select>
             <ChevronDown size={10} />
-          </button>
+          </span>
           <div class="editor-actions">
-            <button class="icon-btn" aria-label="格式化 SQL" title="格式化 SQL" onClick={() => props.onToast("SQL 已格式化")}>
+            <button class="icon-btn" aria-label="格式化 SQL" title="格式化 SQL" onClick={props.onFormat}>
               <WandSparkles size={15} />
             </button>
-            <button class="icon-btn" aria-label="执行计划" title="执行计划" onClick={() => props.onToast("执行计划已生成")}>
+            <button class="icon-btn" aria-label="执行计划" title="执行计划" onClick={props.onExplain}>
               <Info size={15} />
             </button>
             <span class="toolbar-sep" />
@@ -2076,20 +2109,7 @@ function QueryView(props: {
           </div>
         </div>
 
-        <textarea
-          class="sql-editor mono"
-          spellcheck={false}
-          placeholder="输入 SQL，⌘↵ 运行"
-          value={props.sql}
-          onInput={(event) => props.onSqlChange(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault()
-              props.onRun()
-            }
-          }}
-          aria-label="SQL 编辑器"
-        />
+        <SqlEditor value={props.sql} onChange={props.onSqlChange} onRun={props.onRun} />
       </div>
 
       <div class="result-pane">
@@ -2596,6 +2616,9 @@ export default function App() {
   /** indexes into browse().rows staged for deletion */
   const [pendingDeletes, setPendingDeletes] = createSignal<number[]>([])
   const [querySql, setQuerySql] = createSignal("")
+  const [queryTarget, setQueryTarget] = createSignal({ connectionId: "", database: "", schema: "" })
+  const [queryDatabases, setQueryDatabases] = createSignal<string[]>([])
+  const [querySchemas, setQuerySchemas] = createSignal<string[]>([])
   const [queryState, setQueryState] = createSignal<{
     running: boolean
     columns: Array<{ name: string; type: string; primary?: boolean }>
@@ -2678,9 +2701,73 @@ export default function App() {
     if (!existing) {
       setTabs([...tabs(), { id: "query", title: "查询", kind: "query", unsaved: true }])
     }
+    seedQueryTarget()
     setActiveTab("query")
     showToast("已打开查询编辑器")
   }
+
+  /** Point the query toolbar at whatever the sidebar last opened, else the first connection. */
+  function seedQueryTarget() {
+    const current = queryTarget()
+    if (current.connectionId && connections().some((item) => item.id === current.connectionId)) return
+    const active = activeTarget()
+    if (active) {
+      setQueryTarget({ connectionId: active.connection.id, database: active.database, schema: active.schema })
+      return
+    }
+    const first = connections()[0]
+    if (first) {
+      setQueryTarget({
+        connectionId: first.id,
+        database: first.database ?? "",
+        schema: first.default_schema ?? "",
+      })
+    }
+  }
+
+  // the query toolbar's connection list follows the saved connections
+  createEffect(() => {
+    if (connections().length === 0) return
+    seedQueryTarget()
+  })
+
+  createEffect(() => {
+    const connectionId = queryTarget().connectionId
+    if (!connectionId) {
+      setQueryDatabases([])
+      return
+    }
+    let cancelled = false
+    onCleanup(() => {
+      cancelled = true
+    })
+    void getDatabases(connectionId)
+      .then((list) => {
+        if (!cancelled) setQueryDatabases(list.map((item) => item.name))
+      })
+      .catch(() => {
+        if (!cancelled) setQueryDatabases([])
+      })
+  })
+
+  createEffect(() => {
+    const { connectionId, database } = queryTarget()
+    if (!connectionId || !database) {
+      setQuerySchemas([])
+      return
+    }
+    let cancelled = false
+    onCleanup(() => {
+      cancelled = true
+    })
+    void getSchemas(connectionId, database)
+      .then((list) => {
+        if (!cancelled) setQuerySchemas(list)
+      })
+      .catch(() => {
+        if (!cancelled) setQuerySchemas([])
+      })
+  })
 
   function closeTab(id: string) {
     const current = tabs()
@@ -3295,15 +3382,20 @@ export default function App() {
     updateColumnView({ hidden: hidden.includes(name) ? hidden.filter((item) => item !== name) : [...hidden, name] })
   }
 
-  async function runQuery() {
-    const active = activeTarget()
-    if (!active) {
-      showToast("先在左侧打开一个连接")
+  async function runQuery(prefix = "") {
+    const target = queryTarget()
+    if (!target.connectionId) {
+      showToast("先在工具栏选择一个连接")
       return
     }
     setQueryState((state) => ({ ...state, running: true, error: null }))
     try {
-      const result = await executeQuery(active.connection.id, active.database, querySql(), active.schema)
+      const result = await executeQuery(
+        target.connectionId,
+        target.database,
+        `${prefix}${querySql()}`,
+        target.schema || undefined,
+      )
       setQueryState({
         running: false,
         columns: result.columns.map((name, index) => ({
@@ -3319,6 +3411,33 @@ export default function App() {
       const message = error instanceof Error ? error.message : String(error)
       setQueryState((state) => ({ ...state, running: false, error: message }))
     }
+  }
+
+  /** Very small formatter: one clause per line, keywords upper-cased. */
+  function formatSql() {
+    const KEYWORDS = [
+      "select", "from", "where", "group by", "order by", "having", "limit", "offset",
+      "inner join", "left join", "right join", "full join", "cross join", "join",
+      "union all", "union", "insert into", "values", "update", "set", "delete from",
+      "create table", "alter table", "drop table", "on",
+    ]
+    let text = querySql()
+    for (const keyword of KEYWORDS) {
+      const pattern = new RegExp(`\\s*\\b${keyword.replace(/ /g, "\\s+")}\\b\\s*`, "gi")
+      text = text.replace(pattern, `\n${keyword.toUpperCase()} `)
+    }
+    text = text
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter((line, index) => line.trim() || index === 0)
+      .join("\n")
+      .replace(/^\n+/, "")
+      .trim()
+    setQuerySql(text ? `${text}\n` : text)
+  }
+
+  function explainQuery() {
+    void runQuery(queryTarget().connectionId && activeTarget()?.connection.db_type === "sqlite" ? "EXPLAIN QUERY PLAN " : "EXPLAIN ")
   }
 
   function startResize(kind: "sidebar" | "right", event: PointerEvent) {
@@ -3478,9 +3597,11 @@ export default function App() {
                       selectedKey={selectedKey()}
                       onSelect={setSelectedKey}
                       onToast={showToast}
-                      connectionName={activeTarget()?.connection.name ?? "未连接"}
-                      database={activeTarget()?.database ?? "main"}
-                      schema={activeTarget()?.schema ?? "main"}
+                      connections={connections()}
+                      databases={queryDatabases()}
+                      schemas={querySchemas()}
+                      target={queryTarget()}
+                      onTarget={(patch) => setQueryTarget((state) => ({ ...state, ...patch }))}
                       columns={queryState().columns}
                       rows={queryState().rows}
                       rowCount={queryState().rowCount}
@@ -3491,6 +3612,8 @@ export default function App() {
                       sql={querySql()}
                       onSqlChange={setQuerySql}
                       onRun={() => void runQuery()}
+                      onFormat={formatSql}
+                      onExplain={explainQuery}
                       rowStyle={rowStyle()}
                     />
                   </Show>
