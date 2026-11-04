@@ -883,11 +883,11 @@ function Sidebar(props: SidebarProps) {
     ]
   }
 
-  /** Each level starts where its parent's label starts: icon width + gap. */
+  /** Each level steps by one icon width so a child's icon sits under its parent's label. */
   const TREE_ICON = 16
   const TREE_GAP = 6
   const TREE_BASE = 6
-  const TREE_STEP = TREE_ICON + TREE_GAP
+  const TREE_STEP = TREE_ICON
   const TREE_CHEVRON = 14 + TREE_GAP
 
   function renderConnection(conn: DbxConnection, depth: number) {
