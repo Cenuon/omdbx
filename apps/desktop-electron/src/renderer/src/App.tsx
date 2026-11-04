@@ -3524,6 +3524,16 @@ export default function App() {
     void checkForUpdate().then(setUpdate)
     window.api?.onMaximized(setMaximized)
     const onKey = (event: KeyboardEvent) => {
+      // Tab must not walk the UI; the SQL editor accepts completions with it
+      if (event.key === "Tab") {
+        const target = event.target as HTMLElement | null
+        const tag = target?.tagName
+        const editable = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable
+        if (!editable) {
+          event.preventDefault()
+          return
+        }
+      }
       const mod = event.metaKey || event.ctrlKey
       if (mod && event.key === "Enter") {
         event.preventDefault()

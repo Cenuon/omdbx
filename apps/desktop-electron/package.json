@@ -15,6 +15,7 @@
     "dist:linux": "pnpm build && electron-builder --config electron-builder.config.cjs --linux --publish never"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.4",
     "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/language": "^6.13.1",
     "@codemirror/state": "^6.7.6",

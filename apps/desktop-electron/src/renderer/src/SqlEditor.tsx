@@ -1,6 +1,7 @@
 import { createEffect, onCleanup, onMount } from "solid-js"
 import { EditorState } from "@codemirror/state"
 import { EditorView, keymap } from "@codemirror/view"
+import { acceptCompletion } from "@codemirror/autocomplete"
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language"
 import { basicSetup } from "codemirror"
 import { sql } from "@codemirror/lang-sql"
@@ -76,6 +77,11 @@ export default function SqlEditor(props: {
       state: EditorState.create({
         doc: props.value,
         extensions: [
+          // Tab accepts the highlighted completion; otherwise it stays in the editor
+          keymap.of([
+            { key: "Tab", run: acceptCompletion },
+            { key: "Tab", run: () => true },
+          ]),
           basicSetup,
           sql(),
           syntaxHighlighting(highlight),
