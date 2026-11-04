@@ -2049,50 +2049,64 @@ function QueryView(props: {
   const connectionName = () =>
     props.connections.find((item) => item.id === props.target.connectionId)?.name ?? "未选择连接"
 
+  /** A picker that sizes to its label; the select is an invisible overlay. */
+  function picker(options: {
+    icon?: JSX.Element
+    label: string
+    value: string
+    placeholder: string
+    items: Array<{ value: string; label: string }>
+    ariaLabel: string
+    onChange: (value: string) => void
+  }) {
+    return (
+      <span class="ctx-pick">
+        {options.icon}
+        <span class="ctx-value">{options.label}</span>
+        <ChevronDown size={11} />
+        <select
+          value={options.value}
+          aria-label={options.ariaLabel}
+          onChange={(event) => options.onChange(event.currentTarget.value)}
+        >
+          <option value="">{options.placeholder}</option>
+          <For each={options.items}>{(item) => <option value={item.value}>{item.label}</option>}</For>
+        </select>
+      </span>
+    )
+  }
+
   return (
     <section class="view query-view">
       <div class="editor-pane">
         <div class="editor-toolbar">
-          <span class="ctx-pick">
-            <Database size={13} />
-            <select
-              value={props.target.connectionId}
-              aria-label="连接"
-              onChange={(event) =>
-                props.onTarget({ connectionId: event.currentTarget.value, database: "", schema: "" })
-              }
-            >
-              <option value="">未选择连接</option>
-              <For each={props.connections}>{(item) => <option value={item.id}>{item.name}</option>}</For>
-            </select>
-            <ChevronDown size={10} />
-          </span>
+          {picker({
+            icon: <Database size={13} />,
+            label: connectionName(),
+            value: props.target.connectionId,
+            placeholder: "未选择连接",
+            items: props.connections.map((item) => ({ value: item.id, label: item.name })),
+            ariaLabel: "连接",
+            onChange: (value) => props.onTarget({ connectionId: value, database: "", schema: "" }),
+          })}
           <span class="ctx-sep">/</span>
-          <span class="ctx-pick">
-            <select
-              value={props.target.database}
-              aria-label="数据库"
-              onChange={(event) =>
-                props.onTarget({ database: event.currentTarget.value, schema: "" })
-              }
-            >
-              <option value="">默认库</option>
-              <For each={props.databases}>{(name) => <option value={name}>{name}</option>}</For>
-            </select>
-            <ChevronDown size={10} />
-          </span>
+          {picker({
+            label: props.target.database || "默认库",
+            value: props.target.database,
+            placeholder: "默认库",
+            items: props.databases.map((name) => ({ value: name, label: name })),
+            ariaLabel: "数据库",
+            onChange: (value) => props.onTarget({ database: value, schema: "" }),
+          })}
           <span class="ctx-sep">/</span>
-          <span class="ctx-pick">
-            <select
-              value={props.target.schema}
-              aria-label="Schema"
-              onChange={(event) => props.onTarget({ schema: event.currentTarget.value })}
-            >
-              <option value="">默认 Schema</option>
-              <For each={props.schemas}>{(name) => <option value={name}>{name}</option>}</For>
-            </select>
-            <ChevronDown size={10} />
-          </span>
+          {picker({
+            label: props.target.schema || "默认 Schema",
+            value: props.target.schema,
+            placeholder: "默认 Schema",
+            items: props.schemas.map((name) => ({ value: name, label: name })),
+            ariaLabel: "Schema",
+            onChange: (value) => props.onTarget({ schema: value }),
+          })}
           <div class="editor-actions">
             <button class="icon-btn" aria-label="格式化 SQL" title="格式化 SQL" onClick={props.onFormat}>
               <WandSparkles size={15} />
