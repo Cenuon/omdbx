@@ -5055,3 +5055,37 @@ html[data-theme="dark"] .dialog {
   align-items: center;
   gap: 3px;
 }
+
+/* everything under 我的连接 matches the sidebar menu: 13px, ink text and icons */
+.sidebar .tree-label,
+.sidebar .tree-label svg,
+.sidebar .tree-locate,
+.sidebar .tree-row,
+.sidebar .tree-row .tree-name,
+.sidebar .tree-row.folder-row .tree-name,
+.sidebar .tree-row.db-row .tree-name,
+.sidebar .tree-row.tree-db,
+.sidebar .tree-row.tree-table,
+.sidebar .tree-row > svg:not(.chev),
+.sidebar .tree-row.folder-row > svg:not(.chev),
+.sidebar .tree-row.tree-db > svg:not(.chev),
+.sidebar .tree-row.tree-table > svg {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ink);
+}
+.sidebar .tree-row .chev {
+  color: var(--ink);
+}
+.sidebar .tree-row .tree-count {
+  color: var(--ink);
+  font-size: 11px;
+}
+.sidebar .tree-row .tag {
+  color: var(--ink);
+  font-size: 10.5px;
+}
+.sidebar .tree-hint,
+.sidebar .tree-row.leaf.muted {
+  color: var(--ink-2);
+}
