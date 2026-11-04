@@ -64,6 +64,8 @@ export default function SqlEditor(props: {
   value: string
   onChange: (value: string) => void
   onRun: () => void
+  /** hands back an imperative handle for inserting text at the cursor */
+  register?: (api: { insert: (text: string) => void }) => void
 }) {
   let host!: HTMLDivElement
   let view: EditorView | null = null
@@ -94,6 +96,19 @@ export default function SqlEditor(props: {
           }),
         ],
       }),
+    })
+    props.register?.({
+      insert: (text) => {
+        const current = view
+        if (!current) return
+        const selection = current.state.selection.main
+        const prefix = selection.from === 0 || current.state.sliceDoc(selection.from - 1, selection.from) === " " ? "" : " "
+        current.dispatch({
+          changes: { from: selection.from, to: selection.to, insert: prefix + text },
+          selection: { anchor: selection.from + prefix.length + text.length },
+        })
+        current.focus()
+      },
     })
   })
 

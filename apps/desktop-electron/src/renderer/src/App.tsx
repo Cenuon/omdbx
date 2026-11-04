@@ -2029,9 +2029,11 @@ function QueryView(props: {
   onToast: (message: string) => void
   connections: DbxConnection[]
   databases: string[]
-  schemas: string[]
+  tables: Array<{ schema: string; name: string }>
   target: { connectionId: string; database: string; schema: string }
   onTarget: (patch: Partial<{ connectionId: string; database: string; schema: string }>) => void
+  onInsert: (text: string) => void
+  onRegisterEditor: (api: { insert: (text: string) => void }) => void
   columns: Array<{ name: string; type: string; primary?: boolean }>
   rows: (string | number | boolean | null)[][]
   rowCount: number
@@ -2052,29 +2054,32 @@ function QueryView(props: {
   /** A picker that sizes to its label; the select is an invisible overlay. */
   function picker(options: {
     icon?: JSX.Element
-    label: string
-    value: string
+    label: () => string
+    value: () => string
     placeholder: string
-    items: Array<{ value: string; label: string }>
+    items: () => Array<{ value: string; label: string }>
     ariaLabel: string
     onChange: (value: string) => void
   }) {
     return (
       <span class="ctx-pick">
         {options.icon}
-        <span class="ctx-value">{options.label}</span>
+        <span class="ctx-value">{options.label()}</span>
         <ChevronDown size={11} />
         <select
-          value={options.value}
+          value={options.value()}
           aria-label={options.ariaLabel}
           onChange={(event) => options.onChange(event.currentTarget.value)}
         >
           <option value="">{options.placeholder}</option>
-          <For each={options.items}>{(item) => <option value={item.value}>{item.label}</option>}</For>
+          <For each={options.items()}>{(item) => <option value={item.value}>{item.label}</option>}</For>
         </select>
       </span>
     )
   }
+
+  const tableLabel = (item: { schema: string; name: string }) =>
+    !item.schema || item.schema === props.target.database ? item.name : `${item.schema}.${item.name}`
 
   return (
     <section class="view query-view">
@@ -2082,30 +2087,37 @@ function QueryView(props: {
         <div class="editor-toolbar">
           {picker({
             icon: <Database size={13} />,
-            label: connectionName(),
-            value: props.target.connectionId,
+            label: () => connectionName(),
+            value: () => props.target.connectionId,
             placeholder: "未选择连接",
-            items: props.connections.map((item) => ({ value: item.id, label: item.name })),
+            items: () => props.connections.map((item) => ({ value: item.id, label: item.name })),
             ariaLabel: "连接",
             onChange: (value) => props.onTarget({ connectionId: value, database: "", schema: "" }),
           })}
           <span class="ctx-sep">/</span>
           {picker({
-            label: props.target.database || "默认库",
-            value: props.target.database,
+            label: () => props.target.database || "默认库",
+            value: () => props.target.database,
             placeholder: "默认库",
-            items: props.databases.map((name) => ({ value: name, label: name })),
+            items: () => props.databases.map((name) => ({ value: name, label: name })),
             ariaLabel: "数据库",
             onChange: (value) => props.onTarget({ database: value, schema: "" }),
           })}
           <span class="ctx-sep">/</span>
           {picker({
-            label: props.target.schema || "默认 Schema",
-            value: props.target.schema,
-            placeholder: "默认 Schema",
-            items: props.schemas.map((name) => ({ value: name, label: name })),
-            ariaLabel: "Schema",
-            onChange: (value) => props.onTarget({ schema: value }),
+            label: () => "选择表",
+            value: () => "",
+            placeholder: "选择表",
+            items: () => props.tables.map((item) => ({ value: tableLabel(item), label: tableLabel(item) })),
+            ariaLabel: "表",
+            onChange: (value) => {
+              if (!value) return
+              const picked = props.tables.find((item) => tableLabel(item) === value)
+              if (picked) {
+                props.onTarget({ schema: picked.schema })
+                props.onInsert(picked.name)
+              }
+            },
           })}
           <div class="editor-actions">
             <button class="icon-btn" aria-label="格式化 SQL" title="格式化 SQL" onClick={props.onFormat}>
@@ -2123,7 +2135,12 @@ function QueryView(props: {
           </div>
         </div>
 
-        <SqlEditor value={props.sql} onChange={props.onSqlChange} onRun={props.onRun} />
+        <SqlEditor
+          value={props.sql}
+          onChange={props.onSqlChange}
+          onRun={props.onRun}
+          register={props.onRegisterEditor}
+        />
       </div>
 
       <div class="result-pane">
@@ -2632,7 +2649,8 @@ export default function App() {
   const [querySql, setQuerySql] = createSignal("")
   const [queryTarget, setQueryTarget] = createSignal({ connectionId: "", database: "", schema: "" })
   const [queryDatabases, setQueryDatabases] = createSignal<string[]>([])
-  const [querySchemas, setQuerySchemas] = createSignal<string[]>([])
+  const [queryTables, setQueryTables] = createSignal<Array<{ schema: string; name: string }>>([])
+  const sqlInsert = { current: null as null | ((text: string) => void) }
   const [queryState, setQueryState] = createSignal<{
     running: boolean
     columns: Array<{ name: string; type: string; primary?: boolean }>
@@ -2764,23 +2782,34 @@ export default function App() {
       })
   })
 
+  // the table picker lists every table of the current database, across schemas
   createEffect(() => {
     const { connectionId, database } = queryTarget()
     if (!connectionId || !database) {
-      setQuerySchemas([])
+      setQueryTables([])
       return
     }
     let cancelled = false
     onCleanup(() => {
       cancelled = true
     })
-    void getSchemas(connectionId, database)
-      .then((list) => {
-        if (!cancelled) setQuerySchemas(list)
-      })
-      .catch(() => {
-        if (!cancelled) setQuerySchemas([])
-      })
+    void (async () => {
+      try {
+        const schemas = await getSchemas(connectionId, database).catch(() => [] as string[])
+        const names = schemas.length > 0 ? schemas : [database]
+        const groups = await Promise.all(
+          names.map((schema) =>
+            getTables(connectionId, database, schema)
+              .then((list) => list.map((table) => ({ schema, name: table.name })))
+              .catch(() => [] as Array<{ schema: string; name: string }>),
+          ),
+        )
+        if (cancelled) return
+        setQueryTables(groups.flat().sort((a, b) => a.name.localeCompare(b.name)))
+      } catch {
+        if (!cancelled) setQueryTables([])
+      }
+    })()
   })
 
   function closeTab(id: string) {
@@ -3613,9 +3642,14 @@ export default function App() {
                       onToast={showToast}
                       connections={connections()}
                       databases={queryDatabases()}
-                      schemas={querySchemas()}
+                      tables={queryTables()}
                       target={queryTarget()}
                       onTarget={(patch) => setQueryTarget((state) => ({ ...state, ...patch }))}
+                      onInsert={(text) => {
+                        if (sqlInsert.current) sqlInsert.current(text)
+                        else setQuerySql((sql) => (sql ? `${sql} ${text}` : text))
+                      }}
+                      onRegisterEditor={(api) => (sqlInsert.current = api.insert)}
                       columns={queryState().columns}
                       rows={queryState().rows}
                       rowCount={queryState().rowCount}
