@@ -2557,7 +2557,7 @@ export default function App() {
   const [theme, setTheme] = createSignal<Theme>((localStorage.getItem("dbx-theme") as Theme) || "light")
   const [maximized, setMaximized] = createSignal(false)
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false)
-  const [rightCollapsed, setRightCollapsed] = createSignal(false)
+  const [rightCollapsed, setRightCollapsed] = createSignal(true)
   const [activePanel, setActivePanel] = createSignal<Panel>("ai")
   const [settingsOpen, setSettingsOpen] = createSignal(false)
   const [rowStyle, setRowStyle] = createSignal<RowStyle>(initialRowStyle())
