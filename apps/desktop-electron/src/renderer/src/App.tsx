@@ -2651,6 +2651,7 @@ export default function App() {
   const [queryDatabases, setQueryDatabases] = createSignal<string[]>([])
   const [queryTables, setQueryTables] = createSignal<Array<{ schema: string; name: string }>>([])
   const sqlInsert = { current: null as null | ((text: string) => void) }
+  const sqlStatement = { current: null as null | (() => string) }
   const [queryState, setQueryState] = createSignal<{
     running: boolean
     columns: Array<{ name: string; type: string; primary?: boolean }>
@@ -3439,12 +3440,19 @@ export default function App() {
       showToast("先在工具栏选择一个连接")
       return
     }
+    // with several statements in the buffer, run just the one under the cursor
+    const underCursor = sqlStatement.current?.() ?? ""
+    const statement = underCursor.trim() || querySql().trim()
+    if (!statement) {
+      showToast("请输入 SQL")
+      return
+    }
     setQueryState((state) => ({ ...state, running: true, error: null }))
     try {
       const result = await executeQuery(
         target.connectionId,
         target.database,
-        `${prefix}${querySql()}`,
+        `${prefix}${statement}`,
         target.schema || undefined,
       )
       setQueryState({
@@ -3667,7 +3675,10 @@ export default function App() {
                         if (sqlInsert.current) sqlInsert.current(text)
                         else setQuerySql((sql) => (sql ? `${sql} ${text}` : text))
                       }}
-                      onRegisterEditor={(api) => (sqlInsert.current = api.insert)}
+                      onRegisterEditor={(api) => {
+                        sqlInsert.current = api.insert
+                        sqlStatement.current = api.statement
+                      }}
                       columns={queryState().columns}
                       rows={queryState().rows}
                       rowCount={queryState().rowCount}

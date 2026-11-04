@@ -61,12 +61,68 @@ const appTheme = EditorView.theme({
   },
 })
 
+/**
+ * The statement under the cursor (or the selection), so a buffer with several
+ * statements runs the one the user is looking at. Skips strings and comments
+ * when looking for `;`.
+ */
+function statementAt(text: string, position: number): string {
+  const spans: Array<{ start: number; end: number }> = []
+  let start = 0
+  let i = 0
+  while (i < text.length) {
+    const char = text[i]
+    if (char === "'" || char === '"' || char === "`") {
+      const quote = char
+      i += 1
+      while (i < text.length) {
+        if (text[i] === quote) {
+          if (text[i + 1] === quote) {
+            i += 2
+            continue
+          }
+          i += 1
+          break
+        }
+        i += 1
+      }
+      continue
+    }
+    if (char === "-" && text[i + 1] === "-") {
+      const newline = text.indexOf("\n", i)
+      i = newline === -1 ? text.length : newline + 1
+      continue
+    }
+    if (char === "/" && text[i + 1] === "*") {
+      const close = text.indexOf("*/", i + 2)
+      i = close === -1 ? text.length : close + 2
+      continue
+    }
+    if (char === ";") {
+      spans.push({ start, end: i })
+      start = i + 1
+    }
+    i += 1
+  }
+  spans.push({ start, end: text.length })
+  const hit = spans.find((span) => position >= span.start && position <= span.end)
+  const picked = hit ? text.slice(hit.start, hit.end).trim() : ""
+  if (picked) return picked
+  // cursor sits in whitespace (e.g. right after the final `;`) — use the statement before it
+  for (let index = spans.length - 1; index >= 0; index -= 1) {
+    if (spans[index].end >= position) continue
+    const candidate = text.slice(spans[index].start, spans[index].end).trim()
+    if (candidate) return candidate
+  }
+  return text.trim()
+}
+
 export default function SqlEditor(props: {
   value: string
   onChange: (value: string) => void
   onRun: () => void
-  /** hands back an imperative handle for inserting text at the cursor */
-  register?: (api: { insert: (text: string) => void }) => void
+  /** hands back an imperative handle for the toolbar and the run action */
+  register?: (api: { insert: (text: string) => void; statement: () => string }) => void
 }) {
   let host!: HTMLDivElement
   let view: EditorView | null = null
@@ -114,6 +170,13 @@ export default function SqlEditor(props: {
           selection: { anchor: selection.from + prefix.length + text.length },
         })
         current.focus()
+      },
+      statement: () => {
+        const current = view
+        if (!current) return ""
+        const { from, to } = current.state.selection.main
+        if (from !== to) return current.state.sliceDoc(from, to)
+        return statementAt(current.state.doc.toString(), from)
       },
     })
   })
