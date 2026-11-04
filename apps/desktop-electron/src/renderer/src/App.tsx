@@ -1,7 +1,11 @@
 import {
+  ArrowLeftRight,
   ArrowUpDown,
   BookOpen,
+  Box,
+  Boxes,
   Braces,
+  CalendarClock,
   Check,
   ChevronDown,
   ChevronRight,
@@ -21,6 +25,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  GitCompareArrows,
   Grip,
   History,
   Info,
@@ -38,6 +43,7 @@ import {
   Paperclip,
   Pin,
   Play,
+  PlugZap,
   Plus,
   Power,
   RefreshCw,
@@ -45,6 +51,7 @@ import {
   Send,
   Settings,
   Settings2,
+  Share2,
   Sparkles,
   SquarePen,
   Star,
@@ -330,6 +337,7 @@ interface SidebarProps {
   onToggle: () => void
   onNewConnection: () => void
   onNewQuery: () => void
+  onCommonActions: () => void
   onConnectionsChanged: () => void
   onToast: (message: string) => void
   onMinimize: () => void
@@ -387,7 +395,6 @@ function Sidebar(props: SidebarProps) {
   const [folderName, setFolderName] = createSignal("")
   const [sidebarMenu, setSidebarMenu] = createSignal<{ x: number; y: number } | null>(null)
   const [manageOpen, setManageOpen] = createSignal(false)
-  const [query, setQuery] = createSignal("")
 
   let layoutReady = false
 
@@ -540,7 +547,6 @@ function Sidebar(props: SidebarProps) {
       props.onToast("当前没有打开的表")
       return
     }
-    setQuery("")
     const folder = folderOf(conn.id)
     if (folder) setOpenFolders((state) => ({ ...state, [folder.id]: true }))
     setOpenConnections((state) => ({ ...state, [conn.id]: true }))
@@ -605,39 +611,18 @@ function Sidebar(props: SidebarProps) {
     return folders().find((folder) => folder.connections.includes(connectionId))
   }
 
-  /** Sidebar search filters the connection tree by connection name or type. */
-  function matchesQuery(conn: DbxConnection): boolean {
-    const q = query().trim().toLowerCase()
-    if (!q) return true
-    return conn.name.toLowerCase().includes(q) || conn.db_type.toLowerCase().includes(q)
-  }
-
-  function searching(): boolean {
-    return query().trim().length > 0
-  }
-
   function folderOpen(id: string): boolean {
-    return !!openFolders()[id] || searching()
+    return !!openFolders()[id]
   }
 
   function folderConnections(folder: SidebarFolder): DbxConnection[] {
     return folder.connections
       .map((id) => connections().find((conn) => conn.id === id))
       .filter((conn): conn is DbxConnection => !!conn)
-      .filter(matchesQuery)
-  }
-
-  function visibleFolders(): SidebarFolder[] {
-    if (!searching()) return folders()
-    return folders().filter((folder) => folderConnections(folder).length > 0)
   }
 
   function ungroupedConnections(): DbxConnection[] {
-    return connections().filter((conn) => !folderOf(conn.id)).filter(matchesQuery)
-  }
-
-  function matchedCount(): number {
-    return connections().filter(matchesQuery).length
+    return connections().filter((conn) => !folderOf(conn.id))
   }
 
   function toggleFolder(id: string) {
@@ -902,15 +887,14 @@ function Sidebar(props: SidebarProps) {
           <SquarePen size={16} />
           新建连接
         </button>
-        <label class="side-nav-row side-search-row">
-          <Search size={16} />
-          <input
-            value={query()}
-            placeholder="搜索连接"
-            aria-label="搜索连接"
-            onInput={(event) => setQuery(event.currentTarget.value)}
-          />
-        </label>
+        <button class="side-nav-row" onClick={props.onNewQuery}>
+          <Terminal size={16} />
+          新建查询
+        </button>
+        <button class="side-nav-row" onClick={props.onCommonActions}>
+          <Boxes size={16} />
+          常用操作
+        </button>
       </nav>
 
       <div
@@ -934,7 +918,7 @@ function Sidebar(props: SidebarProps) {
               <LocateFixed size={15} />
             </button>
           </div>
-          <For each={visibleFolders()}>
+          <For each={folders()}>
             {(folder) => (
               <div class="tree-group" data-open={folderOpen(folder.id) ? "true" : "false"}>
                 <button
@@ -962,9 +946,6 @@ function Sidebar(props: SidebarProps) {
           <For each={ungroupedConnections()}>{(conn) => renderConnection(conn, 0)}</For>
           <Show when={props.backendStatus === "online" && connections().length === 0}>
             <div class="tree-row leaf muted">暂无保存的连接</div>
-          </Show>
-          <Show when={searching() && matchedCount() === 0 && connections().length > 0}>
-            <div class="tree-row leaf muted">没有匹配的连接</div>
           </Show>
         </div>
       </div>
@@ -1886,6 +1867,107 @@ function RightPanel(props: {
   )
 }
 
+function CommonActionsDialog(props: { onClose: () => void; onAction: (id: string) => void }) {
+  const actions = [
+    { id: "open-sql-file", label: "打开 SQL 文件", icon: <FolderOpen size={15} /> },
+    { id: "data-transfer", label: "数据传输", icon: <ArrowLeftRight size={15} /> },
+    { id: "drivers", label: "驱动管理", icon: <Box size={15} /> },
+    { id: "plugins", label: "插件中心", icon: <PlugZap size={15} /> },
+    { id: "compare-schema", label: "比较架构", icon: <GitCompareArrows size={15} /> },
+    { id: "compare-data", label: "比较数据", icon: <Table2 size={15} /> },
+    { id: "backup", label: "数据库备份", icon: <CalendarClock size={15} /> },
+    { id: "mcp", label: "MCP 设置", icon: <Share2 size={15} /> },
+  ]
+  const [query, setQuery] = createSignal("")
+  const [index, setIndex] = createSignal(0)
+  let input!: HTMLInputElement
+
+  const filtered = createMemo(() => {
+    const needle = query().trim().toLowerCase()
+    if (!needle) return actions
+    return actions.filter((item) => item.label.toLowerCase().includes(needle))
+  })
+
+  createEffect(() => {
+    query()
+    setIndex(0)
+  })
+
+  onMount(() => input?.focus())
+
+  function run(id: string) {
+    props.onAction(id)
+    props.onClose()
+  }
+
+  function onKey(event: KeyboardEvent) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault()
+      setIndex((value) => (value + 1) % Math.max(filtered().length, 1))
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault()
+      setIndex((value) => (value - 1 + filtered().length) % Math.max(filtered().length, 1))
+    } else if (event.key === "Enter") {
+      event.preventDefault()
+      const item = filtered()[index()]
+      if (item) run(item.id)
+    } else if (event.key === "Escape") {
+      event.preventDefault()
+      props.onClose()
+    }
+  }
+
+  return (
+    <div class="palette-backdrop" onClick={(event) => event.target === event.currentTarget && props.onClose()}>
+      <div class="palette" role="dialog" aria-modal="true" aria-label="常用操作">
+        <div class="palette-input">
+          <Search size={16} />
+          <input
+            ref={input}
+            value={query()}
+            onInput={(event) => setQuery(event.currentTarget.value)}
+            onKeyDown={onKey}
+            placeholder="搜索操作"
+            autocomplete="off"
+          />
+          <kbd>Esc</kbd>
+        </div>
+        <div class="palette-list">
+          <div class="palette-group">常用操作</div>
+          <For each={filtered()}>
+            {(item, i) => (
+              <button
+                class="palette-item"
+                classList={{ active: i() === index() }}
+                onMouseEnter={() => setIndex(i())}
+                onClick={() => run(item.id)}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            )}
+          </For>
+          <Show when={filtered().length === 0}>
+            <div class="palette-empty">没有找到匹配操作</div>
+          </Show>
+        </div>
+        <div class="palette-foot">
+          <span>
+            <kbd>↑</kbd>
+            <kbd>↓</kbd> 选择
+          </span>
+          <span>
+            <kbd>↵</kbd> 打开
+          </span>
+          <span>
+            <kbd>Esc</kbd> 关闭
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Toast(props: { message: string | null }) {
   return (
     <Show when={props.message}>
@@ -1967,6 +2049,7 @@ export default function App() {
   const [activeTab, setActiveTab] = createSignal("")
   const [selectedId, setSelectedId] = createSignal(3)
   const [newConnectionOpen, setNewConnectionOpen] = createSignal(false)
+  const [commonActionsOpen, setCommonActionsOpen] = createSignal(false)
   const [connectionReload, setConnectionReload] = createSignal(0)
   const [pendingConnectionId, setPendingConnectionId] = createSignal<string | null>(null)
   const [toast, setToast] = createSignal<string | null>(null)
@@ -1982,6 +2065,26 @@ export default function App() {
     setPendingConnectionId(connection.id)
     setConnectionReload((value) => value + 1)
     showToast(`已保存连接「${connection.name}」`)
+  }
+
+  const COMMON_ACTION_LABELS: Record<string, string> = {
+    "open-sql-file": "打开 SQL 文件",
+    "data-transfer": "数据传输",
+    drivers: "驱动管理",
+    plugins: "插件中心",
+    "compare-schema": "比较架构",
+    "compare-data": "比较数据",
+    backup: "数据库备份",
+    mcp: "MCP 设置",
+  }
+
+  function handleCommonAction(id: string) {
+    const label = COMMON_ACTION_LABELS[id] ?? id
+    if (id === "open-sql-file") {
+      openQuery()
+      return
+    }
+    showToast(`「${label}」暂未实现`)
   }
 
   onCleanup(() => {
@@ -2723,6 +2826,7 @@ export default function App() {
           onToggle={() => setSidebarCollapsed(true)}
           onNewConnection={() => setNewConnectionOpen(true)}
           onNewQuery={openQuery}
+          onCommonActions={() => setCommonActionsOpen(true)}
           onConnectionsChanged={() => void refreshBackend()}
           onToast={showToast}
           onMinimize={() => windowAction("minimize")}
@@ -2859,6 +2963,9 @@ export default function App() {
           onCreated={handleConnectionCreated}
           onToast={showToast}
         />
+      </Show>
+      <Show when={commonActionsOpen()}>
+        <CommonActionsDialog onClose={() => setCommonActionsOpen(false)} onAction={handleCommonAction} />
       </Show>
       <Show when={columnMenu()}>
         {(menu) => (

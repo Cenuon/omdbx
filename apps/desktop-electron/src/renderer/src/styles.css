@@ -4951,3 +4951,107 @@ html[data-theme="dark"] .dialog {
 .dialog-form {
   width: min(600px, calc(100vw - 48px));
 }
+
+/* ---------- command palette (常用操作) ---------- */
+.palette {
+  width: min(460px, calc(100vw - 40px));
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow:
+    0 16px 32px 0 rgba(20, 20, 16, 0.04),
+    0 8px 16px 0 rgba(20, 20, 16, 0.08),
+    0 0 0 0.5px rgba(20, 20, 16, 0.12);
+  animation: palette-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.palette-input {
+  height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 13px;
+  border-bottom: 1px solid var(--line);
+  color: var(--faint);
+}
+.palette-input input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+}
+.palette-input input::placeholder {
+  color: var(--faint);
+}
+.palette-input kbd,
+.palette-foot kbd {
+  height: 17px;
+  min-width: 17px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--faint);
+  font-size: 9.5px;
+  font-family: inherit;
+}
+.palette-list {
+  max-height: 320px;
+  overflow: auto;
+  padding: 6px;
+}
+.palette-group {
+  padding: 8px 8px 4px;
+  color: var(--faint);
+  font-size: 9.5px;
+  font-weight: 500;
+}
+.palette-item {
+  width: 100%;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 9px;
+  border-radius: 6px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  text-align: left;
+}
+.palette-item:hover,
+.palette-item.active {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+.palette-item > svg {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.palette-item.active > svg {
+  color: var(--accent);
+}
+.palette-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--faint);
+  font-size: 12px;
+}
+.palette-foot {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 13px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 9.5px;
+}
+.palette-foot span {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
