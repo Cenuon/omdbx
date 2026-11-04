@@ -436,12 +436,13 @@ function Sidebar(props: SidebarProps) {
     })
   })
 
-  // a connection was just created: reload the list and open it
+  // a connection was just created: reload the list, the folder layout, and open it
   let lastReload = props.reloadToken
   createEffect(() => {
     const token = props.reloadToken
     if (token === lastReload) return
     lastReload = token
+    void loadLayout()
     void refreshConnections().then((list) => {
       const conn = list.find((item) => item.id === props.pendingId)
       if (!conn) return

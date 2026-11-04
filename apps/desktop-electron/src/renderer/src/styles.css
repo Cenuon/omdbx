@@ -4695,3 +4695,257 @@ html[data-theme="dark"] .dialog {
   font-size: 10.5px;
   line-height: 1.4;
 }
+
+/* ---------- connection dialog: label column + control column ---------- */
+.dialog-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 0 16px 12px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--surface-3);
+  align-self: flex-start;
+}
+.dialog-tab {
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 12.5px;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dialog-tab:hover {
+  color: var(--ink);
+}
+.dialog-tab.active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(20, 20, 16, 0.08);
+}
+.conn-form {
+  gap: 12px;
+  padding: 0 16px 16px;
+}
+.conn-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: 12px;
+}
+.conn-label {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.3;
+}
+.conn-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.conn-controls > input,
+.conn-controls > select,
+.conn-controls > textarea,
+.conn-controls > .field-input,
+.conn-controls > .select-wrap {
+  flex: 1;
+  min-width: 0;
+}
+.conn-controls > input,
+.conn-controls > textarea,
+.conn-controls .field-input input,
+.conn-controls > select,
+.conn-controls .select-wrap select {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-family: inherit;
+  outline: 0;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.conn-controls > textarea {
+  height: auto;
+  min-height: 56px;
+  padding: 7px 9px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.conn-controls .select-wrap select {
+  padding-right: 28px;
+  appearance: none;
+  cursor: pointer;
+}
+.conn-controls > input:focus,
+.conn-controls > textarea:focus,
+.conn-controls .field-input input:focus,
+.conn-controls > select:focus,
+.conn-controls .select-wrap select:focus {
+  border-color: var(--line-strong);
+  background: var(--surface);
+}
+.conn-controls input::placeholder,
+.conn-controls textarea::placeholder {
+  color: var(--faint);
+}
+.conn-controls input.conn-narrow {
+  flex: 0 0 96px;
+}
+.field-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.field-input input {
+  padding-right: 30px;
+}
+.field-eye {
+  position: absolute;
+  right: 3px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--muted);
+}
+.field-eye:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.field-check {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.type-row {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 12.5px;
+  text-align: left;
+}
+.type-row:hover {
+  border-color: var(--line-strong);
+  background: var(--surface);
+}
+.type-row img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  flex: 0 0 16px;
+}
+.type-row > span {
+  flex: 1;
+  min-width: 0;
+}
+.type-row > svg {
+  color: var(--faint);
+  flex: 0 0 auto;
+}
+.color-row {
+  gap: 6px;
+}
+.color-dot {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(20, 20, 16, 0.12);
+}
+.color-dot.none {
+  border: 1px dashed var(--line-strong);
+  background: transparent;
+}
+.color-dot.active {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+}
+.group-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.group-pick .select-wrap {
+  min-width: 110px;
+}
+.params-row {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.params-row:hover {
+  border-color: var(--line-strong);
+}
+.params-row > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.params-open {
+  color: var(--ink);
+  flex: 0 0 auto;
+}
+.info-row {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.info-row > svg {
+  color: var(--faint);
+}
+.info-row strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* the connection form is a two-column layout, not the wide type picker */
+.dialog-form {
+  width: min(600px, calc(100vw - 48px));
+}

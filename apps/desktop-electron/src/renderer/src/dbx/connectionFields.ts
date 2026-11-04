@@ -261,3 +261,23 @@ export function fieldRows(fields: FieldSpec[]): FieldSpec[][] {
   }
   return rows
 }
+
+/** Pull host / port / credentials / database out of a pasted URL. */
+export function parseConnectionUrl(input: string): Partial<Values> | null {
+  const text = input.trim()
+  if (!text.includes("://")) return null
+  try {
+    const url = new URL(text)
+    const out: Partial<Values> = {}
+    if (url.hostname) out.host = decodeURIComponent(url.hostname)
+    if (url.port) out.port = Number(url.port)
+    if (url.username) out.username = decodeURIComponent(url.username)
+    if (url.password) out.password = decodeURIComponent(url.password)
+    const database = url.pathname.replace(/^\//, "")
+    if (database) out.database = decodeURIComponent(database)
+    if (url.search) out.url_params = url.search.replace(/^\?/, "")
+    return out
+  } catch {
+    return null
+  }
+}
