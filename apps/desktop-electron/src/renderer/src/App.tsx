@@ -587,7 +587,7 @@ function Sidebar(props: SidebarProps) {
                 style={{ "padding-left": `${indent}px` }}
                 onClick={() => openTable(conn, database, row.schema, row.table)}
               >
-                <Table2 size={12} />
+                <Table2 size={16} />
                 <span class="tree-name">{row.table}</span>
               </button>
             )}
@@ -813,11 +813,13 @@ function Sidebar(props: SidebarProps) {
             setConnectionMenu({ x: event.clientX, y: event.clientY, conn })
           }}
         >
-          <ChevronRight size={13} class="chev" classList={{ open: openConnections()[conn.id] }} />
-          <Show when={icon} fallback={<Database size={15} />}>
+          <Show when={icon} fallback={<Database size={16} />}>
             <img class="conn-icon" src={icon} alt="" loading="lazy" />
           </Show>
           <span class="tree-name">{conn.name}</span>
+          <Show when={connectionOnline(conn)}>
+            <span class="conn-dot" aria-label="已连接" title="已连接" />
+          </Show>
           <span class="row-end">
             <Show when={stars().includes(conn.id)}>
               <Star size={11} class="conn-star" />
@@ -839,11 +841,11 @@ function Sidebar(props: SidebarProps) {
                           aria-expanded={openDatabases()[`${conn.id}|${database}`] ? "true" : "false"}
                         >
                           <ChevronRight
-                            size={12}
+                            size={14}
                             class="chev"
                             classList={{ open: openDatabases()[`${conn.id}|${database}`] }}
                           />
-                          <Database size={13} />
+                          <Database size={16} />
                           <span class="tree-name">{database}</span>
                         </button>
                         <Show when={openDatabases()[`${conn.id}|${database}`]}>
@@ -926,9 +928,8 @@ function Sidebar(props: SidebarProps) {
                   onClick={() => toggleFolder(folder.id)}
                   aria-expanded={folderOpen(folder.id) ? "true" : "false"}
                 >
-                  <ChevronRight size={13} class="chev" classList={{ open: folderOpen(folder.id) }} />
-                  <Show when={folderOpen(folder.id)} fallback={<Folder size={15} />}>
-                    <FolderOpen size={15} />
+                  <Show when={folderOpen(folder.id)} fallback={<Folder size={16} />}>
+                    <FolderOpen size={16} />
                   </Show>
                   <span class="tree-name">{folder.name}</span>
                   <span class="row-end">

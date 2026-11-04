@@ -5089,3 +5089,20 @@ html[data-theme="dark"] .dialog {
 .sidebar .tree-row.leaf.muted {
   color: var(--ink-2);
 }
+
+/* tree icons are menu-sized; connections show a green dot instead of a chevron */
+.sidebar .tree-row > .conn-icon,
+.sidebar .tree-row.folder-row > svg:not(.chev),
+.sidebar .tree-row.tree-db > svg:not(.chev),
+.sidebar .tree-row.tree-table > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+.conn-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: #22c55e;
+}
