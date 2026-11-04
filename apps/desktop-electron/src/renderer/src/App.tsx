@@ -883,8 +883,16 @@ function Sidebar(props: SidebarProps) {
     ]
   }
 
+  /** Each level starts where its parent's label starts: icon width + gap. */
+  const TREE_ICON = 16
+  const TREE_GAP = 6
+  const TREE_BASE = 6
+  const TREE_STEP = TREE_ICON + TREE_GAP
+  const TREE_CHEVRON = 14 + TREE_GAP
+
   function renderConnection(conn: DbxConnection, depth: number) {
     const icon = connectionIcon(conn.db_type)
+    const indent = depth * TREE_STEP + TREE_BASE
     return (
       <div
         class="tree-group"
@@ -895,7 +903,7 @@ function Sidebar(props: SidebarProps) {
         <button
           class="tree-row db-row"
           classList={{ "conn-online": connectionOnline(conn) }}
-          style={{ "padding-left": depth > 0 ? `${depth * 14}px` : undefined }}
+          style={{ "padding-left": depth > 0 ? `${indent}px` : undefined }}
           onClick={() => toggleConnection(conn)}
           aria-expanded={openConnections()[conn.id] ? "true" : "false"}
           onContextMenu={(event) => {
@@ -921,12 +929,16 @@ function Sidebar(props: SidebarProps) {
           <div class="tree-children">
             <Show when={!connectionData()[conn.id]?.loading} fallback={<div class="tree-hint">加载中…</div>}>
               <Show when={databasesOf(conn).length > 0} fallback={<div class="tree-hint">连接失败</div>}>
-                <Show when={databasesOf(conn).length > 1} fallback={renderTables(conn, databasesOf(conn)[0], 20)}>
+                <Show
+                  when={databasesOf(conn).length > 1}
+                  fallback={renderTables(conn, databasesOf(conn)[0], indent + TREE_STEP)}
+                >
                   <For each={databasesOf(conn)}>
                     {(database) => (
                       <div class="tree-group" data-open={openDatabases()[`${conn.id}|${database}`] ? "true" : "false"}>
                         <button
                           class="tree-row tree-db"
+                          style={{ "padding-left": `${indent + TREE_STEP}px` }}
                           onClick={() => toggleDatabase(conn, database)}
                           aria-expanded={openDatabases()[`${conn.id}|${database}`] ? "true" : "false"}
                         >
@@ -939,7 +951,9 @@ function Sidebar(props: SidebarProps) {
                           <span class="tree-name">{database}</span>
                         </button>
                         <Show when={openDatabases()[`${conn.id}|${database}`]}>
-                          <div class="tree-children">{renderTables(conn, database, 34)}</div>
+                          <div class="tree-children">
+                            {renderTables(conn, database, indent + TREE_STEP + TREE_CHEVRON + TREE_STEP)}
+                          </div>
                         </Show>
                       </div>
                     )}
