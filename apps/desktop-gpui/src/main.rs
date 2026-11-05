@@ -740,8 +740,6 @@ impl Omdbx {
             .h_full()
             .flex_none()
             .bg(colors.sidebar)
-            .border_r_1()
-            .border_color(colors.sidebar_border)
             // transparent titlebar: the traffic lights sit over this strip
             .child(TitleBar::new().h(px(44.)))
             .child(
@@ -830,8 +828,6 @@ impl Omdbx {
                 v_flex()
                     .h(px(240.))
                     .flex_none()
-                    .border_b_1()
-                    .border_color(colors.border)
                     .font_family(cx.theme().mono_font_family.clone())
                     .text_size(px(13.))
                     .child(match self.query.as_ref() {
@@ -911,8 +907,6 @@ impl Omdbx {
                     .px_3()
                     .gap_1()
                     .items_center()
-                    .border_b_1()
-                    .border_color(colors.border)
                     .children(self.tabs.iter().enumerate().map(|(index, item)| {
                         let is_active = Some(index) == self.active && !self.show_query;
                         let title = item.title.clone();
@@ -964,8 +958,6 @@ impl Omdbx {
                     .px_4()
                     .gap_3()
                     .items_center()
-                    .border_b_1()
-                    .border_color(colors.border)
                     .child(
                         div()
                             .text_size(px(14.))
@@ -1116,7 +1108,7 @@ fn main() {
             theme.mode = ThemeMode::Light;
             // flatten the titlebar into the sidebar, like the rest of the shell
             theme.colors.title_bar = theme.colors.sidebar;
-            theme.colors.title_bar_border = theme.colors.sidebar_border;
+            theme.colors.title_bar_border = theme.colors.sidebar;
         });
         gpui_kit::open_window(
             WindowOptions {
