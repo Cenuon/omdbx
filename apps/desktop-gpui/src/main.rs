@@ -311,6 +311,7 @@ struct Omdbx {
     show_query: bool,
     search: Entity<InputState>,
     filter: String,
+    sidebar_open: bool,
 }
 
 impl Omdbx {
@@ -355,6 +356,7 @@ impl Omdbx {
             show_query: false,
             search,
             filter: String::new(),
+            sidebar_open: true,
         }
     }
 
@@ -756,10 +758,16 @@ impl Omdbx {
                             .child("OMDBX"),
                     )
                     .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(muted)
-                            .child(format!("{} 连接", self.connections.len())),
+                        h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(muted)
+                                    .child(format!("{} 连接", self.connections.len())),
+                            )
+                            .child(self.sidebar_toggle(cx)),
                     ),
             )
             .child(
@@ -1094,45 +1102,103 @@ fn split_handle() -> ResizeHandleRenderer {
     Rc::new(|_, _, _| Some(div().into_any_element()))
 }
 
+impl Omdbx {
+    fn sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("sidebar-toggle")
+            .ghost()
+            .xsmall()
+            .icon(
+                Icon::new(if self.sidebar_open {
+                    AssetIcon::PanelLeftClose
+                } else {
+                    AssetIcon::PanelLeftOpen
+                })
+                .xsmall(),
+            )
+            .tooltip(if self.sidebar_open {
+                "收起侧栏"
+            } else {
+                "展开侧栏"
+            })
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.sidebar_open = !this.sidebar_open;
+                cx.notify();
+            }))
+    }
+
+    /// The white content card, inset from the shell by a small gap.
+    fn content_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors;
+        div()
+            .flex_1()
+            .h_full()
+            .min_w_0()
+            .p(px(8.))
+            .child(
+                v_flex()
+                    .size_full()
+                    .rounded(px(10.))
+                    .overflow_hidden()
+                    .bg(colors.background)
+                    .border_1()
+                    .border_color(colors.border)
+                    // content must not reach the bottom corner arcs
+                    .pb(px(10.))
+                    .child(self.main_pane(cx)),
+            )
+    }
+}
+
 impl Render for Omdbx {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
-        h_flex()
-            .size_full()
-            .bg(colors.sidebar)
-            .text_color(colors.foreground)
-            .child(
-                h_resizable("shell")
-                    .with_handle_appearance(split_handle())
-                    .child(
-                        resizable_panel()
-                            .size(px(280.))
-                            .size_range(px(180.)..px(420.))
-                            .fixed()
-                            .child(self.sidebar(cx)),
-                    )
-                    .child(
-                        resizable_panel().child(
-                            div()
-                                .h_full()
-                                .w_full()
-                                // a small gap so the content reads as a card
-                                .p(px(8.))
+        if self.sidebar_open {
+            h_flex()
+                .size_full()
+                .bg(colors.sidebar)
+                .text_color(colors.foreground)
+                .child(
+                    h_resizable("shell")
+                        .with_handle_appearance(split_handle())
+                        .child(
+                            resizable_panel()
+                                .size(px(280.))
+                                .size_range(px(180.)..px(420.))
+                                .fixed()
+                                .child(self.sidebar(cx)),
+                        )
+                        .child(self.content_card(cx).into_any_element()),
+                )
+        } else {
+            v_flex()
+                .size_full()
+                .bg(colors.sidebar)
+                .text_color(colors.foreground)
+                .child(
+                    div()
+                        .relative()
+                        .h(px(44.))
+                        .flex_none()
+                        .child(TitleBar::new().h(px(44.)).bg(colors.sidebar))
+                        .child(
+                            h_flex()
+                                .absolute()
+                                .top_0()
+                                .left(px(80.))
+                                .h(px(44.))
+                                .items_center()
+                                .gap_2()
+                                .child(self.sidebar_toggle(cx))
                                 .child(
-                                    v_flex()
-                                        .size_full()
-                                        .rounded(px(10.))
-                                        .overflow_hidden()
-                                        .bg(colors.background)
-                                        .border_1()
-                                        .border_color(colors.border)
-                                        // content must not reach the bottom corner arcs
-                                        .pb(px(10.))
-                                        .child(self.main_pane(cx)),
+                                    div()
+                                        .text_size(px(13.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child("OMDBX"),
                                 ),
                         ),
-                    ),
-            )
+                )
+                .child(self.content_card(cx))
+        }
     }
 }
 
