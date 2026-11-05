@@ -1,0 +1,16 @@
+[package]
+name = "omdbx-gpui"
+version = "0.1.0"
+edition = "2021"
+description = "OMDBX desktop app, Rust + GPUI"
+license = "MIT"
+
+# Standalone workspace: the repo root declares a cargo workspace whose members
+# are not checked out in this sparse clone.
+[workspace]
+
+[dependencies]
+gpui = { version = "0.2.2", features = ["macos-blade"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = "2"
