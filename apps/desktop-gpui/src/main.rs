@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::{Editor, EditorState};
 use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableState};
 use gpui_kit::component::{
     h_flex, v_flex, ActiveTheme, Icon, IconName, Sizable, Theme, ThemeMode,
@@ -13,7 +14,7 @@ use gpui_kit::component::{
 use gpui_kit::assets::IconName as AssetIcon;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    div, px, App, Entity, InteractiveElement, Stateful, Context, IntoElement, ParentElement, Render, SharedString, Styled,
+    div, px, App, Entity, InteractiveElement, Context, IntoElement, ParentElement, Render, SharedString, Styled,
     Window, WindowOptions,
 };
 use serde::Deserialize;
@@ -158,10 +159,16 @@ fn fetch_rows(
     schema: &str,
     table: &str,
 ) -> Result<TableData, String> {
-    let sql = format!(
-        "SELECT * FROM {} LIMIT {ROW_LIMIT}",
-        connection.quote(table)
-    );
+    let sql = format!("SELECT * FROM {} LIMIT {ROW_LIMIT}", connection.quote(table));
+    run_sql(connection, database, schema, &sql)
+}
+
+fn run_sql(
+    connection: &Connection,
+    database: &str,
+    schema: &str,
+    sql: &str,
+) -> Result<TableData, String> {
     let value = post_json(
         &format!("{API}/api/query/execute"),
         &json!({
@@ -298,6 +305,8 @@ struct Omdbx {
     rows: Vec<Vec<String>>,
     loading: bool,
     grid: Option<Entity<TableState<GridDelegate>>>,
+    query: Option<Entity<EditorState>>,
+    show_query: bool,
 }
 
 impl Omdbx {
@@ -330,6 +339,8 @@ impl Omdbx {
             rows: Vec::new(),
             loading: false,
             grid: None,
+            query: None,
+            show_query: false,
         }
     }
 
@@ -472,6 +483,79 @@ impl Omdbx {
         cx.notify();
     }
 
+
+    fn open_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.query.is_none() {
+            self.query = Some(cx.new(|cx| {
+                EditorState::new(window, cx)
+                    .default_value("SELECT 1")
+                    .language("sql")
+            }));
+        }
+        self.show_query = true;
+        cx.notify();
+    }
+
+    /// Connection the query runs against: the active table tab, else the first connection.
+    fn query_target(&self) -> Option<(Connection, String, String)> {
+        let tab = self.active.and_then(|index| self.tabs.get(index));
+        if let Some(tab) = tab {
+            let connection = self
+                .connections
+                .iter()
+                .find(|item| item.id == tab.connection_id)?
+                .clone();
+            return Some((connection, tab.database.clone(), tab.schema.clone()));
+        }
+        let connection = self.connections.first()?.clone();
+        let database = self
+            .databases
+            .get(&connection.id)
+            .and_then(|list| list.last())
+            .cloned()
+            .unwrap_or_default();
+        let schema = connection
+            .default_schema
+            .clone()
+            .unwrap_or_else(|| database.clone());
+        Some((connection, database, schema))
+    }
+
+    fn run_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(state) = self.query.clone() else { return };
+        let sql = state.read(cx).value().to_string();
+        if sql.trim().is_empty() {
+            return;
+        }
+        let Some((connection, database, schema)) = self.query_target() else {
+            self.error = Some("没有可用的连接".to_string());
+            cx.notify();
+            return;
+        };
+        self.loading = true;
+        cx.notify();
+        match run_sql(&connection, &database, &schema, &sql) {
+            Ok(data) => {
+                let delegate = GridDelegate {
+                    columns: data.columns.clone(),
+                    rows: data.rows.clone(),
+                };
+                self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx)));
+                self.columns = data.columns;
+                self.rows = data.rows;
+                self.error = None;
+            }
+            Err(message) => {
+                self.grid = None;
+                self.columns = Vec::new();
+                self.rows = Vec::new();
+                self.error = Some(message);
+            }
+        }
+        self.loading = false;
+        cx.notify();
+    }
+
     fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index >= self.tabs.len() {
             return;
@@ -546,6 +630,82 @@ impl Omdbx {
         )
     }
 
+
+    fn query_pane(&self, tab: &Option<Tab>, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors;
+        let muted = colors.muted_foreground;
+        let target = self
+            .query_target()
+            .map(|(connection, database, _)| format!("{} · {}", connection.name, database))
+            .unwrap_or_else(|| "没有连接".to_string());
+
+        v_flex()
+            .flex_1()
+            .h_full()
+            .min_w_0()
+            .child(
+                div()
+                    .h(px(240.))
+                    .flex_none()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .children(self.query.as_ref().map(|state| Editor::new(state))),
+            )
+            .child(
+                h_flex()
+                    .h(px(40.))
+                    .flex_none()
+                    .px_3()
+                    .gap_2()
+                    .items_center()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .child(
+                        Button::new("run-query")
+                            .primary()
+                            .small()
+                            .label("运行")
+                            .on_click(cx.listener(|this, _, window, cx| this.run_query(window, cx))),
+                    )
+                    .child(div().text_xs().text_color(muted).child(target))
+                    .child(div().flex_1())
+                    .child(
+                        div().text_xs().text_color(muted).child(if self.loading {
+                            "执行中…".to_string()
+                        } else {
+                            match &self.error {
+                                Some(message) => message.clone(),
+                                None => format!("{} 行", self.rows.len()),
+                            }
+                        }),
+                    ),
+            )
+            .child(match self.grid.clone() {
+                Some(grid) => div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(DataTable::new(&grid).stripe(true))
+                    .into_any_element(),
+                None => v_flex()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(format!(
+                                "在编辑器里写 SQL，⌘↵ 或点运行{}",
+                                match tab {
+                                    Some(tab) => format!("（当前表 {}）", tab.title),
+                                    None => String::new(),
+                                }
+                            )),
+                    )
+                    .into_any_element(),
+            })
+    }
+
     fn main_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let tab = self.active.and_then(|index| self.tabs.get(index)).cloned();
@@ -600,10 +760,35 @@ impl Omdbx {
                                     })),
                             )
                             .on_click(cx.listener(move |this, _, window, cx| {
+                                this.show_query = false;
                                 this.active = Some(index);
                                 this.load_active(window, cx);
                             }))
-                    })),
+                    }))
+                    .children(self.query.as_ref().map(|_| {
+                        let is_active = self.show_query;
+                        h_flex()
+                            .id("tab-query")
+                            .h(px(28.))
+                            .px_2()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .text_sm()
+                            .when(is_active, |this| this.bg(colors.secondary).text_color(colors.foreground))
+                            .when(!is_active, |this| this.text_color(muted).hover(|style| style.bg(colors.secondary)))
+                            .child("查询")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_query = true;
+                                cx.notify();
+                            }))
+                    }))
+                    .child(
+                        Button::new("new-query")
+                            .ghost()
+                            .xsmall()
+                            .label("+")
+                            .on_click(cx.listener(|this, _, window, cx| this.open_query(window, cx))),
+                    ),
             )
             // toolbar
             .child(
@@ -652,7 +837,10 @@ impl Omdbx {
                     ),
             )
             // body
-            .child(match &tab {
+            .child(if self.show_query {
+                self.query_pane(&tab, cx).into_any_element()
+            } else {
+                match &tab {
                 None => v_flex()
                     .flex_1()
                     .items_center()
@@ -703,7 +891,8 @@ impl Omdbx {
                                 }),
                         )
                         .into_any_element(),
-                },
+                }
+                }
             })
     }
 }
