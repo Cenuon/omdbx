@@ -96,6 +96,32 @@ fn fetch_connections() -> Result<Vec<Connection>, String> {
     serde_json::from_value(value).map_err(|error| error.to_string())
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+struct ColumnMeta {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    data_type: String,
+    #[serde(default)]
+    comment: String,
+}
+
+fn fetch_columns(
+    connection_id: &str,
+    database: &str,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<ColumnMeta>, String> {
+    let value = get_json(&format!(
+        "{API}/api/schema/columns?connection_id={}&database={}&schema={}&table={}",
+        encode(connection_id),
+        encode(database),
+        encode(schema),
+        encode(table)
+    ))?;
+    serde_json::from_value(value).map_err(|error| error.to_string())
+}
+
 fn fetch_databases(connection_id: &str) -> Result<Vec<String>, String> {
     let value = get_json(&format!(
         "{API}/api/schema/databases?connection_id={}",
@@ -244,11 +270,12 @@ fn encode(value: &str) -> String {
 struct GridDelegate {
     columns: Vec<String>,
     rows: Vec<Vec<String>>,
+    meta: Vec<ColumnMeta>,
 }
 
 impl TableDelegate for GridDelegate {
     fn columns_count(&self, _: &App) -> usize {
-        self.columns.len()
+        self.columns.len() + 1
     }
 
     fn rows_count(&self, _: &App) -> usize {
@@ -256,17 +283,38 @@ impl TableDelegate for GridDelegate {
     }
 
     fn column(&self, index: usize, _: &App) -> Column {
-        let name = self.columns.get(index).cloned().unwrap_or_default();
-        // the cells draw their own padding and column rule
         // right padding only: the cell origin is the column boundary, so the
         // rule can be drawn exactly on it; the header's sort-icon correction
         // is zero because the right padding matches the default
-        Column::new(name.clone(), name).paddings(gpui_kit::Edges {
+        let padding = gpui_kit::Edges {
             top: px(0.),
             right: px(12.),
             bottom: px(0.),
             left: px(0.),
-        })
+        };
+        if index == 0 {
+            return Column::new("#", "#")
+                .width(px(52.))
+                .fixed_left()
+                .resizable(false)
+                .movable(false)
+                .selectable(false)
+                .paddings(padding);
+        }
+        let name = self.columns.get(index - 1).cloned().unwrap_or_default();
+        let width = self
+            .meta
+            .get(index - 1)
+            .map(|meta| {
+                let text = (meta.name.chars().count() as f32 * 8.)
+                    .max(meta.data_type.chars().count() as f32 * 7.)
+                    .max(meta.comment.chars().count() as f32 * 11.);
+                (text + 28.).clamp(120., 260.)
+            })
+            .unwrap_or(140.);
+        Column::new(name.clone(), name)
+            .width(px(width))
+            .paddings(padding)
     }
 
     fn render_th(
@@ -275,15 +323,32 @@ impl TableDelegate for GridDelegate {
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        let muted = cx.theme().colors.muted_foreground;
+        if col_ix == 0 {
+            return div()
+                .h_full()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_end()
+                .text_size(px(11.))
+                .text_color(muted)
+                .child("#")
+                .into_any_element();
+        }
+        let name = self.columns.get(col_ix - 1).cloned().unwrap_or_default();
+        let (data_type, comment) = self
+            .meta
+            .get(col_ix - 1)
+            .map(|meta| (meta.data_type.clone(), meta.comment.clone()))
+            .unwrap_or_default();
+        let type_color = data_type_color(&data_type, muted);
         div()
             .h_full()
             .w_full()
             .flex()
             .items_center()
-            .text_size(px(12.))
-            .font_weight(FontWeight::MEDIUM)
-            .when(col_ix == 0, |this| this.child(div().w(px(12.))))
-            .when(col_ix > 0, |this| {
+            .when(col_ix > 1, |this| {
                 this.child(
                     div()
                         .h_full()
@@ -293,13 +358,39 @@ impl TableDelegate for GridDelegate {
                 )
                 .child(div().w(px(11.)))
             })
+            .when(col_ix == 1, |this| this.child(div().w(px(12.))))
             .child(
-                div()
-                    .min_w_0()
+                v_flex()
                     .flex_1()
-                    .truncate()
-                    .child(self.columns.get(col_ix).cloned().unwrap_or_default()),
+                    .min_w_0()
+                    .gap(px(1.))
+                    .child(
+                        div()
+                            .truncate()
+                            .text_size(px(12.5))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(name),
+                    )
+                    .when(!data_type.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .truncate()
+                                .text_size(px(11.))
+                                .text_color(type_color)
+                                .child(data_type),
+                        )
+                    })
+                    .when(!comment.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .truncate()
+                                .text_size(px(11.))
+                                .text_color(muted)
+                                .child(comment),
+                        )
+                    }),
             )
+            .into_any_element()
     }
 
     fn render_td(
@@ -309,21 +400,34 @@ impl TableDelegate for GridDelegate {
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        let muted = cx.theme().colors.muted_foreground;
+        if col == 0 {
+            return div()
+                .h_full()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_end()
+                .text_size(px(11.))
+                .text_color(muted)
+                // the fixed column paints above the row stripe
+                .when(row % 2 == 1, |this| this.bg(cx.theme().tokens.table_even))
+                .child(format!("{}", row + 1))
+                .into_any_element();
+        }
         let text = self
             .rows
             .get(row)
-            .and_then(|cells| cells.get(col))
+            .and_then(|cells| cells.get(col - 1))
             .cloned()
             .unwrap_or_default();
         let is_null = text == "NULL";
-        let muted = cx.theme().colors.muted_foreground;
         div()
             .h_full()
             .w_full()
             .flex()
             .items_center()
-            .when(col == 0, |this| this.child(div().w(px(12.))))
-            .when(col > 0, |this| {
+            .when(col > 1, |this| {
                 this.child(
                     div()
                         .h_full()
@@ -333,6 +437,7 @@ impl TableDelegate for GridDelegate {
                 )
                 .child(div().w(px(11.)))
             })
+            .when(col == 1, |this| this.child(div().w(px(12.))))
             .child(
                 div()
                     .min_w_0()
@@ -342,6 +447,29 @@ impl TableDelegate for GridDelegate {
                     .when(is_null, |this| this.text_color(muted))
                     .child(text),
             )
+            .into_any_element()
+    }
+}
+
+fn data_type_color(data_type: &str, muted: Hsla) -> Hsla {
+    let ty = data_type.to_ascii_lowercase();
+    if ["int", "decimal", "numeric", "float", "double", "real", "bit"]
+        .iter()
+        .any(|needle| ty.contains(needle))
+    {
+        gpui_kit::rgb(0x3F7FD0).into()
+    } else if ["char", "text", "enum", "set", "json", "blob", "binary"]
+        .iter()
+        .any(|needle| ty.contains(needle))
+    {
+        gpui_kit::rgb(0x2F9E8F).into()
+    } else if ["date", "time", "year"]
+        .iter()
+        .any(|needle| ty.contains(needle))
+    {
+        gpui_kit::rgb(0xB7791F).into()
+    } else {
+        muted
     }
 }
 
@@ -542,9 +670,28 @@ impl Omdbx {
         cx.notify();
         match fetch_rows(&connection, &tab.database, &tab.schema, &tab.table) {
             Ok(data) => {
+                let table_meta = fetch_columns(
+                    &tab.connection_id,
+                    &tab.database,
+                    &tab.schema,
+                    &tab.table,
+                )
+                .unwrap_or_default();
+                let meta: Vec<ColumnMeta> = data
+                    .columns
+                    .iter()
+                    .map(|name| {
+                        table_meta
+                            .iter()
+                            .find(|item| &item.name == name)
+                            .cloned()
+                            .unwrap_or_default()
+                    })
+                    .collect();
                 let delegate = GridDelegate {
                     columns: data.columns.clone(),
                     rows: data.rows.clone(),
+                    meta,
                 };
                 self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
                 self.columns = data.columns;
@@ -620,6 +767,7 @@ impl Omdbx {
                 let delegate = GridDelegate {
                     columns: data.columns.clone(),
                     rows: data.rows.clone(),
+                    meta: Vec::new(),
                 };
                 self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
                 self.columns = data.columns;
@@ -876,12 +1024,12 @@ impl Omdbx {
                             .top_0()
                             .left_0()
                             .right_0()
-                            .h(px(40.))
+                            .h(px(64.))
                             .border_t_1()
                             .border_color(colors.border)
-                            .bg(gpui_kit::rgb(0xFAFAFA)),
+                            .bg(gpui_kit::rgb(0xF0F0F1)),
                     )
-                    .child(DataTable::new(grid).bordered(false).large()),
+                    .child(DataTable::new(grid).bordered(false).large().stripe(true).header_row_height(px(64.))),
             )
     }
 
