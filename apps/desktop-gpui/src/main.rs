@@ -1124,6 +1124,8 @@ impl Render for Omdbx {
                                         .rounded(px(10.))
                                         .overflow_hidden()
                                         .bg(colors.background)
+                                        .border_1()
+                                        .border_color(colors.border)
                                         // content must not reach the bottom corner arcs
                                         .pb(px(10.))
                                         .child(self.main_pane(cx)),
