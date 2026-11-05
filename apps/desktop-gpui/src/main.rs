@@ -906,7 +906,7 @@ impl Omdbx {
                             .justify_center()
                             .rounded_md()
                             .cursor_pointer()
-                            .hover(|style| style.bg(colors.secondary_active))
+                            .hover(|style| style.bg(colors.sidebar_accent))
                             .child(
                                 Icon::new(AssetIcon::Plus)
                                     .with_size(px(18.))
