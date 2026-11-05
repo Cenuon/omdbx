@@ -896,24 +896,15 @@ impl Omdbx {
                             cx,
                         )
                     }))
-                    .child(
-                        h_flex()
-                            .id("new-query")
-                            .h(px(28.))
-                            .w(px(28.))
-                            .flex_none()
-                            .items_center()
-                            .justify_center()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .hover(|style| style.bg(colors.sidebar_accent))
-                            .child(
-                                Icon::new(AssetIcon::Plus)
-                                    .with_size(px(18.))
-                                    .text_color(colors.muted_foreground),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| this.open_query(window, cx))),
-                    )
+                    .child(Self::icon_button(
+                        "new-query",
+                        Icon::new(AssetIcon::Plus)
+                            .with_size(px(18.))
+                            .text_color(colors.muted_foreground)
+                            .into_any_element(),
+                        colors,
+                        cx.listener(|this, _, window, cx| this.open_query(window, cx)),
+                    ))
                     .child(div().flex_1())
                     .child(
                         Button::new("refresh")
@@ -1121,6 +1112,28 @@ fn split_handle() -> ResizeHandleRenderer {
 }
 
 impl Omdbx {
+    /// One square icon button: both titlebar buttons go through this so their
+    /// hit area, radius and hover fill cannot drift apart.
+    fn icon_button(
+        id: &'static str,
+        child: gpui_kit::AnyElement,
+        colors: gpui_kit::component::ThemeColor,
+        on_click: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> gpui_kit::Stateful<gpui_kit::Div> {
+        h_flex()
+            .id(id)
+            .h(px(28.))
+            .w(px(28.))
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .cursor_pointer()
+            .hover(|style| style.bg(colors.secondary_active))
+            .child(child)
+            .on_click(on_click)
+    }
+
     /// Sidebar glyph: the filled left panel means "expand", the divider means
     /// "collapse", matching the states the button switches between.
     fn sidebar_glyph(open: bool, color: Hsla) -> impl IntoElement {
@@ -1138,23 +1151,17 @@ impl Omdbx {
         }
     }
 
-    fn sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn sidebar_toggle(&self, cx: &mut Context<Self>) -> gpui_kit::Stateful<gpui_kit::Div> {
         let colors = cx.theme().colors;
-        h_flex()
-            .id("sidebar-toggle")
-            .h(px(28.))
-            .w(px(28.))
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .rounded_md()
-            .cursor_pointer()
-            .hover(|style| style.bg(colors.sidebar_accent))
-            .child(Self::sidebar_glyph(self.sidebar_open, colors.muted_foreground))
-            .on_click(cx.listener(|this, _, _, cx| {
+        Self::icon_button(
+            "sidebar-toggle",
+            Self::sidebar_glyph(self.sidebar_open, colors.muted_foreground).into_any_element(),
+            colors,
+            cx.listener(|this, _, _, cx| {
                 this.sidebar_open = !this.sidebar_open;
                 cx.notify();
-            }))
+            }),
+        )
     }
 
     /// The white content card, inset from the shell by a small gap.
