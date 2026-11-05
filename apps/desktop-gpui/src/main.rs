@@ -3,18 +3,17 @@
 //! logic is shared with the Electron build.
 
 use std::collections::{HashMap, HashSet};
-use std::ops::Range;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::list::ListItem;
+use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableState};
 use gpui_kit::component::{
     h_flex, v_flex, ActiveTheme, Icon, IconName, Sizable, Theme, ThemeMode,
 };
 use gpui_kit::assets::IconName as AssetIcon;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    div, px, uniform_list, App, Context, IntoElement, ParentElement, Render, SharedString, Styled,
+    div, px, App, Entity, InteractiveElement, Stateful, Context, IntoElement, ParentElement, Render, SharedString, Styled,
     Window, WindowOptions,
 };
 use serde::Deserialize;
@@ -22,7 +21,6 @@ use serde_json::json;
 
 const API: &str = "http://127.0.0.1:4224";
 const ROW_LIMIT: usize = 200;
-const CELL_WIDTH: f32 = 180.0;
 
 // ---------------------------------------------------------------- http
 
@@ -229,6 +227,52 @@ fn encode(value: &str) -> String {
         .collect()
 }
 
+
+// ---------------------------------------------------------------- grid
+
+/// Backing store handed to gpui-kit"s DataTable: virtual scrolling, resizable
+/// columns, sorting, row/cell selection all come from the component.
+struct GridDelegate {
+    columns: Vec<String>,
+    rows: Vec<Vec<String>>,
+}
+
+impl TableDelegate for GridDelegate {
+    fn columns_count(&self, _: &App) -> usize {
+        self.columns.len()
+    }
+
+    fn rows_count(&self, _: &App) -> usize {
+        self.rows.len()
+    }
+
+    fn column(&self, index: usize, _: &App) -> Column {
+        let name = self.columns.get(index).cloned().unwrap_or_default();
+        Column::new(name.clone(), name)
+    }
+
+    fn render_td(
+        &mut self,
+        row: usize,
+        col: usize,
+        _window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        let text = self
+            .rows
+            .get(row)
+            .and_then(|cells| cells.get(col))
+            .cloned()
+            .unwrap_or_default();
+        let is_null = text == "NULL";
+        let muted = cx.theme().colors.muted_foreground;
+        div()
+            .truncate()
+            .when(is_null, |this| this.text_color(muted))
+            .child(text)
+    }
+}
+
 // ---------------------------------------------------------------- state
 
 #[derive(Clone)]
@@ -253,6 +297,7 @@ struct Omdbx {
     columns: Vec<String>,
     rows: Vec<Vec<String>>,
     loading: bool,
+    grid: Option<Entity<TableState<GridDelegate>>>,
 }
 
 impl Omdbx {
@@ -284,6 +329,7 @@ impl Omdbx {
             columns: Vec::new(),
             rows: Vec::new(),
             loading: false,
+            grid: None,
         }
     }
 
@@ -358,7 +404,14 @@ impl Omdbx {
         cx.notify();
     }
 
-    fn open_table(&mut self, connection_id: &str, database: &str, table: &str, cx: &mut Context<Self>) {
+    fn open_table(
+        &mut self,
+        connection_id: &str,
+        database: &str,
+        table: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(connection) = self.connections.iter().find(|item| item.id == connection_id).cloned()
         else {
             return;
@@ -381,10 +434,10 @@ impl Omdbx {
             });
             self.active = Some(self.tabs.len() - 1);
         }
-        self.load_active(cx);
+        self.load_active(window, cx);
     }
 
-    fn load_active(&mut self, cx: &mut Context<Self>) {
+    fn load_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(index) = self.active else { return };
         let Some(tab) = self.tabs.get(index).cloned() else { return };
         let Some(connection) = self
@@ -399,11 +452,17 @@ impl Omdbx {
         cx.notify();
         match fetch_rows(&connection, &tab.database, &tab.schema, &tab.table) {
             Ok(data) => {
+                let delegate = GridDelegate {
+                    columns: data.columns.clone(),
+                    rows: data.rows.clone(),
+                };
+                self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx)));
                 self.columns = data.columns;
                 self.rows = data.rows;
                 self.error = None;
             }
             Err(message) => {
+                self.grid = None;
                 self.columns = Vec::new();
                 self.rows = Vec::new();
                 self.error = Some(message);
@@ -413,19 +472,20 @@ impl Omdbx {
         cx.notify();
     }
 
-    fn close_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+    fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index >= self.tabs.len() {
             return;
         }
         self.tabs.remove(index);
         if self.tabs.is_empty() {
             self.active = None;
+            self.grid = None;
             self.columns.clear();
             self.rows.clear();
         } else {
             let next = index.min(self.tabs.len() - 1);
             self.active = Some(next);
-            self.load_active(cx);
+            self.load_active(window, cx);
             return;
         }
         cx.notify();
@@ -534,14 +594,14 @@ impl Omdbx {
                                     .text_color(muted)
                                     .hover(|style| style.bg(colors.border))
                                     .child("×")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                    .on_click(cx.listener(move |this, _, window, cx| {
                                         cx.stop_propagation();
-                                        this.close_tab(close_index, cx);
+                                        this.close_tab(close_index, window, cx);
                                     })),
                             )
-                            .on_click(cx.listener(move |this, _, _, cx| {
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 this.active = Some(index);
-                                this.load_active(cx);
+                                this.load_active(window, cx);
                             }))
                     })),
             )
@@ -623,62 +683,27 @@ impl Omdbx {
                             }),
                     )
                     .into_any_element(),
-                Some(_) => {
-                    let columns = self.columns.clone();
-                    v_flex()
+                Some(_) => match self.grid.clone() {
+                    Some(grid) => div()
                         .flex_1()
                         .min_h_0()
+                        .child(DataTable::new(&grid).stripe(true))
+                        .into_any_element(),
+                    None => v_flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
                         .child(
-                            h_flex()
-                                .h(px(32.))
-                                .flex_none()
-                                .border_b_1()
-                                .border_color(colors.border)
-                                .bg(colors.secondary)
-                                .children(columns.iter().map(|column| {
-                                    div()
-                                        .w(px(CELL_WIDTH))
-                                        .flex_none()
-                                        .px_2()
-                                        .text_xs()
-                                        .truncate()
-                                        .child(column.clone())
-                                })),
+                            div()
+                                .text_sm()
+                                .text_color(muted)
+                                .child(match &self.error {
+                                    Some(message) => format!("查询失败：{message}"),
+                                    None => "没有数据".to_string(),
+                                }),
                         )
-                        .child(
-                            div().flex_1().min_h_0().child(
-                                uniform_list(
-                                    "rows",
-                                    self.rows.len(),
-                                    cx.processor(move |this, range: Range<usize>, _, _| {
-                                        let mut items = Vec::new();
-                                        for index in range {
-                                            if let Some(row) = this.rows.get(index) {
-                                                items.push(
-                                                    h_flex()
-                                                        .h(px(28.))
-                                                        .border_b_1()
-                                                        .border_color(colors.border)
-                                                        .text_sm()
-                                                        .children(row.iter().map(|cell| {
-                                                            div()
-                                                                .w(px(CELL_WIDTH))
-                                                                .flex_none()
-                                                                .px_2()
-                                                                .truncate()
-                                                                .child(cell.clone())
-                                                        })),
-                                                );
-                                            }
-                                        }
-                                        items
-                                    }),
-                                )
-                                .size_full(),
-                            ),
-                        )
-                        .into_any_element()
-                }
+                        .into_any_element(),
+                },
             })
     }
 }
@@ -737,8 +762,8 @@ impl Render for Omdbx {
                             Icon::new(AssetIcon::Grid2x2),
                             table.clone(),
                             colors,
-                            cx.listener(move |this, _, _, cx| {
-                                this.open_table(&conn_id, &db_name, &table_name, cx)
+                            cx.listener(move |this, _, window, cx| {
+                                this.open_table(&conn_id, &db_name, &table_name, window, cx)
                             }),
                         )
                         .into_any_element(),
