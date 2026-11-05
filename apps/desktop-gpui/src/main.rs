@@ -897,11 +897,21 @@ impl Omdbx {
                         )
                     }))
                     .child(
-                        Button::new("new-query")
-                            .ghost()
-                            .xsmall()
-                            .icon(Icon::new(AssetIcon::Plus).xsmall())
-                            .tooltip("新建查询")
+                        h_flex()
+                            .id("new-query")
+                            .h(px(28.))
+                            .w(px(28.))
+                            .flex_none()
+                            .items_center()
+                            .justify_center()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .hover(|style| style.bg(colors.secondary_active))
+                            .child(
+                                Icon::new(AssetIcon::Plus)
+                                    .with_size(px(18.))
+                                    .text_color(colors.muted_foreground),
+                            )
                             .on_click(cx.listener(|this, _, window, cx| this.open_query(window, cx))),
                     )
                     .child(div().flex_1())
@@ -1068,11 +1078,19 @@ impl Omdbx {
                 .child(
                     div()
                         .id(SharedString::from(format!("close-{id}")))
-                        .px_1()
-                        .rounded_sm()
-                        .text_xs()
+                        .size(px(18.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(4.))
+                        .text_size(px(12.))
                         .text_color(muted)
-                        .hover(|style| style.bg(colors.border))
+                        .hover(|style| {
+                            style
+                                .bg(colors.secondary_active)
+                                .text_color(colors.foreground)
+                        })
                         .child("×")
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
