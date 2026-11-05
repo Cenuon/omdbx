@@ -644,12 +644,17 @@ impl Omdbx {
             .h_full()
             .min_w_0()
             .child(
-                div()
+                v_flex()
                     .h(px(240.))
                     .flex_none()
                     .border_b_1()
                     .border_color(colors.border)
-                    .children(self.query.as_ref().map(|state| Editor::new(state))),
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_size(px(13.))
+                    .child(match self.query.as_ref() {
+                        Some(state) => Editor::new(state).h(gpui_kit::relative(1.)).into_any_element(),
+                        None => div().into_any_element(),
+                    }),
             )
             .child(
                 h_flex()
