@@ -13,9 +13,7 @@ use gpui_kit::component::{
     h_flex, v_flex, ActiveTheme, Icon, IconName, Sizable, Theme, ThemeMode, TitleBar,
 };
 use gpui_kit::assets::IconName as AssetIcon;
-use gpui_kit::base::{
-    h_resizable, resizable_panel, ResizeHandleRenderer, ResizeHandleState,
-};
+use gpui_kit::base::{h_resizable, resizable_panel, ResizeHandleRenderer};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     div, px, App, Context, Entity, FontWeight, InteractiveElement, IntoElement, ParentElement,
@@ -1090,20 +1088,11 @@ impl Omdbx {
     }
 }
 
-/// Divider between the sidebar and the content: invisible at rest so the
-/// shell keeps its line-free look, a hairline while the pointer is on it.
+/// Divider between the sidebar and the content: never painted. The 9px band
+/// still hit-tests and switches to the column-resize cursor, so the shell keeps
+/// its line-free look in every state.
 fn split_handle() -> ResizeHandleRenderer {
-    Rc::new(|handle, _window, cx| {
-        Some(match handle.state() {
-            ResizeHandleState::Idle => div().into_any_element(),
-            _ => div()
-                .flex_none()
-                .w(px(1.))
-                .h_full()
-                .bg(cx.theme().colors.ring)
-                .into_any_element(),
-        })
-    })
+    Rc::new(|_, _, _| Some(div().into_any_element()))
 }
 
 impl Render for Omdbx {
