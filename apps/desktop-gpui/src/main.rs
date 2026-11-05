@@ -257,18 +257,29 @@ impl TableDelegate for GridDelegate {
 
     fn column(&self, index: usize, _: &App) -> Column {
         let name = self.columns.get(index).cloned().unwrap_or_default();
-        Column::new(name.clone(), name)
+        // the cells draw their own padding and column rule
+        Column::new(name.clone(), name).paddings(gpui_kit::Edges::all(px(0.)))
     }
 
     fn render_th(
         &mut self,
         col_ix: usize,
         _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
+        cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        let last = col_ix + 1 == self.columns.len();
         div()
+            .h_full()
+            .w_full()
+            .flex()
+            .items_center()
+            .px(px(12.))
             .text_size(px(12.))
             .font_weight(FontWeight::MEDIUM)
+            .when(!last, |this| {
+                this.border_r_1()
+                    .border_color(cx.theme().table_row_border)
+            })
             .child(self.columns.get(col_ix).cloned().unwrap_or_default())
     }
 
@@ -287,11 +298,25 @@ impl TableDelegate for GridDelegate {
             .unwrap_or_default();
         let is_null = text == "NULL";
         let muted = cx.theme().colors.muted_foreground;
+        let last = col + 1 == self.columns.len();
         div()
-            .truncate()
-            .text_size(px(13.))
-            .when(is_null, |this| this.text_color(muted))
-            .child(text)
+            .h_full()
+            .w_full()
+            .flex()
+            .items_center()
+            .px(px(12.))
+            .when(!last, |this| {
+                this.border_r_1()
+                    .border_color(cx.theme().table_row_border)
+            })
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(13.))
+                    .when(is_null, |this| this.text_color(muted))
+                    .child(text),
+            )
     }
 }
 
