@@ -1250,7 +1250,7 @@ fn main() {
         Theme::update(cx, |theme| {
             theme.mode = ThemeMode::Light;
             // the shell background; the content card floats on it
-            theme.colors.sidebar = gpui_kit::rgb(0xF6F6F8).into();
+            theme.colors.sidebar = gpui_kit::rgb(0xF9F9F9).into();
             // flatten the titlebar into the sidebar, like the rest of the shell
             theme.colors.title_bar = theme.colors.sidebar;
             theme.colors.title_bar_border = theme.colors.sidebar;
