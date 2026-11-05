@@ -488,7 +488,9 @@ impl Omdbx {
         if self.query.is_none() {
             self.query = Some(cx.new(|cx| {
                 EditorState::new(window, cx)
-                    .default_value("SELECT 1")
+                    .default_value(
+                        "SELECT id, name\nFROM customers\nWHERE id > 10\nORDER BY id\nLIMIT 50",
+                    )
                     .language("sql")
             }));
         }
