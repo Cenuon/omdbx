@@ -1107,16 +1107,16 @@ impl Omdbx {
     /// "collapse", matching the states the button switches between.
     fn sidebar_glyph(open: bool, color: Hsla) -> impl IntoElement {
         let frame = div()
-            .w(px(16.))
-            .h(px(16.))
+            .w(px(14.))
+            .h(px(14.))
             .flex_none()
             .rounded(px(2.))
             .border_1()
             .border_color(color);
         if open {
-            frame.child(div().h_full().w(px(1.)).ml(px(4.)).bg(color))
+            frame.child(div().h_full().w(px(1.)).ml(px(3.)).bg(color))
         } else {
-            frame.child(div().h_full().w(px(5.)).bg(color))
+            frame.child(div().h_full().w(px(4.)).bg(color))
         }
     }
 
@@ -1243,7 +1243,12 @@ fn main() {
                 ..TitleBar::window_options()
             },
             cx,
-            |window, cx| cx.new(|cx| Omdbx::new(window, cx)),
+            |window, cx| {
+                // center the traffic lights on the 44px titlebar axis
+                #[cfg(target_os = "macos")]
+                window.set_traffic_light_position(gpui_kit::point(px(9.), px(15.)));
+                cx.new(|cx| Omdbx::new(window, cx))
+            },
         )
         .expect("failed to open window");
         cx.activate(true);
