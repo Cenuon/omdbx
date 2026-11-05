@@ -1164,7 +1164,8 @@ impl Omdbx {
             .flex_1()
             .h_full()
             .min_w_0()
-            .p(px(8.))
+            .px(px(8.))
+            .pb(px(8.))
             .child(
                 v_flex()
                     .size_full()
