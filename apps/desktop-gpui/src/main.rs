@@ -375,7 +375,7 @@ impl TableDelegate for GridDelegate {
                         this.child(
                             div()
                                 .truncate()
-                                .text_size(px(11.))
+                                .text_size(px(10.))
                                 .text_color(type_color)
                                 .child(data_type),
                         )
@@ -384,8 +384,8 @@ impl TableDelegate for GridDelegate {
                         this.child(
                             div()
                                 .truncate()
-                                .text_size(px(11.))
-                                .text_color(muted)
+                                .text_size(px(10.))
+                                .text_color(gpui_kit::rgb(0x9A9AA0))
                                 .child(comment),
                         )
                     }),
@@ -457,17 +457,17 @@ fn data_type_color(data_type: &str, muted: Hsla) -> Hsla {
         .iter()
         .any(|needle| ty.contains(needle))
     {
-        gpui_kit::rgb(0x3F7FD0).into()
+        gpui_kit::rgb(0x6B9BD8).into()
     } else if ["char", "text", "enum", "set", "json", "blob", "binary"]
         .iter()
         .any(|needle| ty.contains(needle))
     {
-        gpui_kit::rgb(0x2F9E8F).into()
+        gpui_kit::rgb(0x63B3A6).into()
     } else if ["date", "time", "year"]
         .iter()
         .any(|needle| ty.contains(needle))
     {
-        gpui_kit::rgb(0xB7791F).into()
+        gpui_kit::rgb(0xC9A15E).into()
     } else {
         muted
     }
