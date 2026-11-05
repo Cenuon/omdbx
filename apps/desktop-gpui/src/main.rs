@@ -260,6 +260,18 @@ impl TableDelegate for GridDelegate {
         Column::new(name.clone(), name)
     }
 
+    fn render_th(
+        &mut self,
+        col_ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        div()
+            .text_size(px(12.))
+            .font_weight(FontWeight::MEDIUM)
+            .child(self.columns.get(col_ix).cloned().unwrap_or_default())
+    }
+
     fn render_td(
         &mut self,
         row: usize,
@@ -277,6 +289,7 @@ impl TableDelegate for GridDelegate {
         let muted = cx.theme().colors.muted_foreground;
         div()
             .truncate()
+            .text_size(px(13.))
             .when(is_null, |this| this.text_color(muted))
             .child(text)
     }
@@ -483,7 +496,7 @@ impl Omdbx {
                     columns: data.columns.clone(),
                     rows: data.rows.clone(),
                 };
-                self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx)));
+                self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
                 self.columns = data.columns;
                 self.rows = data.rows;
                 self.error = None;
@@ -558,7 +571,7 @@ impl Omdbx {
                     columns: data.columns.clone(),
                     rows: data.rows.clone(),
                 };
-                self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx)));
+                self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
                 self.columns = data.columns;
                 self.rows = data.rows;
                 self.error = None;
@@ -841,7 +854,7 @@ impl Omdbx {
                 Some(grid) => div()
                     .flex_1()
                     .min_h_0()
-                    .child(DataTable::new(&grid).stripe(true))
+                    .child(DataTable::new(&grid).stripe(true).bordered(false).large())
                     .into_any_element(),
                 None => Self::empty_state(
                     "写一条 SQL 然后运行",
@@ -1018,7 +1031,7 @@ impl Omdbx {
                         Some(grid) => div()
                             .flex_1()
                             .min_h_0()
-                            .child(DataTable::new(&grid).stripe(true))
+                            .child(DataTable::new(&grid).stripe(true).bordered(false).large())
                             .into_any_element(),
                         None => Self::empty_state(
                             "没有数据",
