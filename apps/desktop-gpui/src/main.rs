@@ -743,30 +743,21 @@ impl Omdbx {
             .w_full()
             .h_full()
             .bg(colors.sidebar)
-            // transparent titlebar: the traffic lights sit over this strip
-            .child(TitleBar::new().h(px(44.)).bg(colors.sidebar))
+            // transparent titlebar: the traffic lights sit over this strip, the
+            // collapse toggle hugs its right edge
             .child(
-                h_flex()
-                    .h(px(34.))
-                    .px_3()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_size(px(16.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("OMDBX"),
-                    )
+                div()
+                    .relative()
+                    .h(px(44.))
+                    .flex_none()
+                    .child(TitleBar::new().h(px(44.)).bg(colors.sidebar))
                     .child(
                         h_flex()
-                            .gap_1()
+                            .absolute()
+                            .top_0()
+                            .right(px(8.))
+                            .h(px(44.))
                             .items_center()
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(muted)
-                                    .child(format!("{} 连接", self.connections.len())),
-                            )
                             .child(self.sidebar_toggle(cx)),
                     ),
             )
@@ -1188,13 +1179,7 @@ impl Render for Omdbx {
                                 .h(px(44.))
                                 .items_center()
                                 .gap_2()
-                                .child(self.sidebar_toggle(cx))
-                                .child(
-                                    div()
-                                        .text_size(px(13.))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child("OMDBX"),
-                                ),
+                                .child(self.sidebar_toggle(cx)),
                         ),
                 )
                 .child(self.content_card(cx))
