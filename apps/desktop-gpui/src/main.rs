@@ -16,8 +16,8 @@ use gpui_kit::assets::IconName as AssetIcon;
 use gpui_kit::base::{h_resizable, resizable_panel, ResizeHandleRenderer};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    div, px, App, Context, Entity, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, Styled, Window, WindowOptions,
+    div, px, App, Context, Entity, FontWeight, Hsla, InteractiveElement, IntoElement,
+    ParentElement, Render, SharedString, Styled, Window, WindowOptions,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -1094,23 +1094,36 @@ fn split_handle() -> ResizeHandleRenderer {
 }
 
 impl Omdbx {
+    /// Sidebar glyph: the filled left panel means "expand", the divider means
+    /// "collapse", matching the states the button switches between.
+    fn sidebar_glyph(open: bool, color: Hsla) -> impl IntoElement {
+        let frame = div()
+            .w(px(20.))
+            .h(px(17.))
+            .flex_none()
+            .rounded(px(2.5))
+            .border_1()
+            .border_color(color);
+        if open {
+            frame.child(div().h_full().w(px(1.)).ml(px(5.)).bg(color))
+        } else {
+            frame.child(div().h_full().w(px(6.)).bg(color))
+        }
+    }
+
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        Button::new("sidebar-toggle")
-            .ghost()
-            .xsmall()
-            .icon(
-                Icon::new(if self.sidebar_open {
-                    AssetIcon::PanelLeftClose
-                } else {
-                    AssetIcon::PanelLeftOpen
-                })
-                .xsmall(),
-            )
-            .tooltip(if self.sidebar_open {
-                "收起侧栏"
-            } else {
-                "展开侧栏"
-            })
+        let colors = cx.theme().colors;
+        h_flex()
+            .id("sidebar-toggle")
+            .h(px(28.))
+            .w(px(28.))
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .cursor_pointer()
+            .hover(|style| style.bg(colors.sidebar_accent))
+            .child(Self::sidebar_glyph(self.sidebar_open, colors.muted_foreground))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.sidebar_open = !this.sidebar_open;
                 cx.notify();
