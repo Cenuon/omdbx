@@ -1106,7 +1106,7 @@ impl Render for Omdbx {
                     .with_handle_appearance(split_handle())
                     .child(
                         resizable_panel()
-                            .size(px(232.))
+                            .size(px(260.))
                             .size_range(px(180.)..px(420.))
                             .fixed()
                             .child(self.sidebar(cx)),
@@ -1142,7 +1142,7 @@ fn main() {
         Theme::update(cx, |theme| {
             theme.mode = ThemeMode::Light;
             // the shell background; the content card floats on it
-            theme.colors.sidebar = gpui_kit::rgb(0xE9E9EC).into();
+            theme.colors.sidebar = gpui_kit::rgb(0xF0F0F2).into();
             // flatten the titlebar into the sidebar, like the rest of the shell
             theme.colors.title_bar = theme.colors.sidebar;
             theme.colors.title_bar_border = theme.colors.sidebar;
