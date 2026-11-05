@@ -3,6 +3,7 @@
 //! logic is shared with the Electron build.
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -12,6 +13,9 @@ use gpui_kit::component::{
     h_flex, v_flex, ActiveTheme, Icon, IconName, Sizable, Theme, ThemeMode, TitleBar,
 };
 use gpui_kit::assets::IconName as AssetIcon;
+use gpui_kit::base::{
+    h_resizable, resizable_panel, ResizeHandleRenderer, ResizeHandleState,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     div, px, App, Context, Entity, FontWeight, InteractiveElement, IntoElement, ParentElement,
@@ -736,9 +740,8 @@ impl Omdbx {
         let colors = cx.theme().colors;
         let muted = colors.muted_foreground;
         v_flex()
-            .w(px(232.))
+            .w_full()
             .h_full()
-            .flex_none()
             .bg(colors.sidebar)
             // transparent titlebar: the traffic lights sit over this strip
             .child(TitleBar::new().h(px(44.)))
@@ -1087,6 +1090,22 @@ impl Omdbx {
     }
 }
 
+/// Divider between the sidebar and the content: invisible at rest so the
+/// shell keeps its line-free look, a hairline while the pointer is on it.
+fn split_handle() -> ResizeHandleRenderer {
+    Rc::new(|handle, _window, cx| {
+        Some(match handle.state() {
+            ResizeHandleState::Idle => div().into_any_element(),
+            _ => div()
+                .flex_none()
+                .w(px(1.))
+                .h_full()
+                .bg(cx.theme().colors.ring)
+                .into_any_element(),
+        })
+    })
+}
+
 impl Render for Omdbx {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
@@ -1094,8 +1113,18 @@ impl Render for Omdbx {
             .size_full()
             .bg(colors.background)
             .text_color(colors.foreground)
-            .child(self.sidebar(cx))
-            .child(self.main_pane(cx))
+            .child(
+                h_resizable("shell")
+                    .with_handle_appearance(split_handle())
+                    .child(
+                        resizable_panel()
+                            .size(px(232.))
+                            .size_range(px(180.)..px(420.))
+                            .fixed()
+                            .child(self.sidebar(cx)),
+                    )
+                    .child(resizable_panel().child(self.main_pane(cx))),
+            )
     }
 }
 
