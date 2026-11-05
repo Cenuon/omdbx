@@ -855,6 +855,66 @@ impl Omdbx {
             })
     }
 
+    /// Tabs live in the titlebar row, outside the content card.
+    fn tab_bar(&self, leading_toggle: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors;
+        h_flex()
+            .h(px(44.))
+            .w_full()
+            .min_w_0()
+            .items_center()
+            .gap_1()
+            .when(leading_toggle, |this| {
+                this.pl(px(72.))
+                    .child(self.sidebar_toggle(cx))
+                    .child(div().w(px(4.)))
+            })
+            .when(!leading_toggle, |this| this.pl(px(12.)))
+            .pr(px(12.))
+            .children(self.tabs.iter().enumerate().map(|(index, item)| {
+                        let is_active = Some(index) == self.active && !self.show_query;
+                        let title = item.title.clone();
+                        let close_index = index;
+                        self.tab_chip(
+                            format!("tab-{}", item.key),
+                            AssetIcon::Table2,
+                            title,
+                            is_active,
+                            Some(close_index),
+                            colors,
+                            cx,
+                        )
+                    }))
+                    .children(self.query.as_ref().map(|_| {
+                        self.tab_chip(
+                            "tab-query".to_string(),
+                            AssetIcon::SquareTerminal,
+                            "查询".to_string(),
+                            self.show_query,
+                            None,
+                            colors,
+                            cx,
+                        )
+                    }))
+                    .child(
+                        Button::new("new-query")
+                            .ghost()
+                            .xsmall()
+                            .icon(Icon::new(AssetIcon::Plus).xsmall())
+                            .tooltip("新建查询")
+                            .on_click(cx.listener(|this, _, window, cx| this.open_query(window, cx))),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("refresh")
+                            .ghost()
+                            .xsmall()
+                            .icon(Icon::new(AssetIcon::RefreshCw).xsmall())
+                            .tooltip("刷新连接")
+                            .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
+                    )
+    }
+
     fn main_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let muted = colors.muted_foreground;
@@ -898,57 +958,6 @@ impl Omdbx {
             .flex_1()
             .h_full()
             .min_w_0()
-            // tab strip
-            .child(
-                h_flex()
-                    .h(px(44.))
-                    .flex_none()
-                    .px_3()
-                    .gap_1()
-                    .items_center()
-                    .children(self.tabs.iter().enumerate().map(|(index, item)| {
-                        let is_active = Some(index) == self.active && !self.show_query;
-                        let title = item.title.clone();
-                        let close_index = index;
-                        self.tab_chip(
-                            format!("tab-{}", item.key),
-                            AssetIcon::Table2,
-                            title,
-                            is_active,
-                            Some(close_index),
-                            colors,
-                            cx,
-                        )
-                    }))
-                    .children(self.query.as_ref().map(|_| {
-                        self.tab_chip(
-                            "tab-query".to_string(),
-                            AssetIcon::SquareTerminal,
-                            "查询".to_string(),
-                            self.show_query,
-                            None,
-                            colors,
-                            cx,
-                        )
-                    }))
-                    .child(
-                        Button::new("new-query")
-                            .ghost()
-                            .xsmall()
-                            .icon(Icon::new(AssetIcon::Plus).xsmall())
-                            .tooltip("新建查询")
-                            .on_click(cx.listener(|this, _, window, cx| this.open_query(window, cx))),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        Button::new("refresh")
-                            .ghost()
-                            .xsmall()
-                            .icon(Icon::new(AssetIcon::RefreshCw).xsmall())
-                            .tooltip("刷新连接")
-                            .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
-                    ),
-            )
             // context bar: what is open, on which connection, and the actions
             .child(
                 h_flex()
@@ -1171,7 +1180,15 @@ impl Render for Omdbx {
                                 .fixed()
                                 .child(self.sidebar(cx)),
                         )
-                        .child(self.content_card(cx).into_any_element()),
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .h_full()
+                                .min_w_0()
+                                .child(self.tab_bar(false, cx))
+                                .child(self.content_card(cx))
+                                .into_any_element(),
+                        ),
                 )
         } else {
             v_flex()
@@ -1185,14 +1202,13 @@ impl Render for Omdbx {
                         .flex_none()
                         .child(TitleBar::new().h(px(44.)).bg(colors.sidebar))
                         .child(
-                            h_flex()
+                            div()
                                 .absolute()
                                 .top_0()
-                                .left(px(80.))
+                                .left(px(0.))
+                                .right(px(0.))
                                 .h(px(44.))
-                                .items_center()
-                                .gap_2()
-                                .child(self.sidebar_toggle(cx)),
+                                .child(self.tab_bar(true, cx)),
                         ),
                 )
                 .child(self.content_card(cx))
