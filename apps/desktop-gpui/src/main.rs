@@ -865,7 +865,7 @@ impl Omdbx {
             .items_center()
             .gap_1()
             .when(leading_toggle, |this| {
-                this.pl(px(72.))
+                this.pl(px(88.))
                     .child(self.sidebar_toggle(cx))
                     .child(div().w(px(4.)))
             })
