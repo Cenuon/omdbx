@@ -38,8 +38,19 @@ impl Connection {
     }
 }
 
+fn agent() -> ureq::Agent {
+    // localhost must never go through the user's HTTP proxy (HTTP_PROXY/ALL_PROXY),
+    // and a hung sidecar should not freeze the UI thread.
+    ureq::AgentBuilder::new()
+        .try_proxy_from_env(false)
+        .timeout_connect(std::time::Duration::from_secs(2))
+        .timeout_read(std::time::Duration::from_secs(5))
+        .build()
+}
+
 fn fetch_connections() -> Result<Vec<Connection>, String> {
-    let body = ureq::get(&format!("{API}/api/connection/list"))
+    let body = agent()
+        .get(&format!("{API}/api/connection/list"))
         .call()
         .map_err(|error| error.to_string())?
         .into_string()
