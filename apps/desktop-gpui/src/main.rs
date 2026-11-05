@@ -258,7 +258,15 @@ impl TableDelegate for GridDelegate {
     fn column(&self, index: usize, _: &App) -> Column {
         let name = self.columns.get(index).cloned().unwrap_or_default();
         // the cells draw their own padding and column rule
-        Column::new(name.clone(), name).paddings(gpui_kit::Edges::all(px(0.)))
+        // right padding only: the cell origin is the column boundary, so the
+        // rule can be drawn exactly on it; the header's sort-icon correction
+        // is zero because the right padding matches the default
+        Column::new(name.clone(), name).paddings(gpui_kit::Edges {
+            top: px(0.),
+            right: px(12.),
+            bottom: px(0.),
+            left: px(0.),
+        })
     }
 
     fn render_th(
@@ -267,20 +275,31 @@ impl TableDelegate for GridDelegate {
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        let last = col_ix + 1 == self.columns.len();
         div()
             .h_full()
             .w_full()
             .flex()
             .items_center()
-            .px(px(12.))
             .text_size(px(12.))
             .font_weight(FontWeight::MEDIUM)
-            .when(!last, |this| {
-                this.border_r_1()
-                    .border_color(cx.theme().table_row_border)
+            .when(col_ix == 0, |this| this.child(div().w(px(12.))))
+            .when(col_ix > 0, |this| {
+                this.child(
+                    div()
+                        .h_full()
+                        .w(px(1.))
+                        .flex_none()
+                        .bg(cx.theme().table_row_border),
+                )
+                .child(div().w(px(11.)))
             })
-            .child(self.columns.get(col_ix).cloned().unwrap_or_default())
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .truncate()
+                    .child(self.columns.get(col_ix).cloned().unwrap_or_default()),
+            )
     }
 
     fn render_td(
@@ -298,20 +317,26 @@ impl TableDelegate for GridDelegate {
             .unwrap_or_default();
         let is_null = text == "NULL";
         let muted = cx.theme().colors.muted_foreground;
-        let last = col + 1 == self.columns.len();
         div()
             .h_full()
             .w_full()
             .flex()
             .items_center()
-            .px(px(12.))
-            .when(!last, |this| {
-                this.border_r_1()
-                    .border_color(cx.theme().table_row_border)
+            .when(col == 0, |this| this.child(div().w(px(12.))))
+            .when(col > 0, |this| {
+                this.child(
+                    div()
+                        .h_full()
+                        .w(px(1.))
+                        .flex_none()
+                        .bg(cx.theme().table_row_border),
+                )
+                .child(div().w(px(11.)))
             })
             .child(
                 div()
                     .min_w_0()
+                    .flex_1()
                     .truncate()
                     .text_size(px(13.))
                     .when(is_null, |this| this.text_color(muted))
