@@ -6,16 +6,16 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::{Editor, EditorState};
+use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
 use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableState};
 use gpui_kit::component::{
-    h_flex, v_flex, ActiveTheme, Icon, IconName, Sizable, Theme, ThemeMode,
+    h_flex, v_flex, ActiveTheme, Icon, IconName, Sizable, Theme, ThemeMode, TitleBar,
 };
 use gpui_kit::assets::IconName as AssetIcon;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    div, px, App, Entity, InteractiveElement, Context, IntoElement, ParentElement, Render, SharedString, Styled,
-    Window, WindowOptions,
+    div, px, App, Context, Entity, FontWeight, InteractiveElement, IntoElement, ParentElement,
+    Render, SharedString, Styled, Window, WindowOptions,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -307,10 +307,20 @@ struct Omdbx {
     grid: Option<Entity<TableState<GridDelegate>>>,
     query: Option<Entity<EditorState>>,
     show_query: bool,
+    search: Entity<InputState>,
+    filter: String,
 }
 
 impl Omdbx {
-    fn new() -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索连接或表"));
+        cx.subscribe(&search, |this, state, event: &InputEvent, cx| {
+            if let InputEvent::Change = event {
+                this.filter = state.read(cx).value().to_string();
+                cx.notify();
+            }
+        })
+        .detach();
         let (connections, error) = match fetch_connections() {
             Ok(list) => (list, None),
             Err(message) => (Vec::new(), Some(message)),
@@ -341,6 +351,8 @@ impl Omdbx {
             grid: None,
             query: None,
             show_query: false,
+            search,
+            filter: String::new(),
         }
     }
 
@@ -587,17 +599,18 @@ fn tree_row(
     colors: gpui_kit::component::ThemeColor,
     on_click: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let primary = indent <= 14.;
     h_flex()
         .id(SharedString::from(id))
-        .h(px(28.))
+        .h(px(if primary { 32. } else { 26. }))
         .mx_2()
         .pl(px(indent))
         .pr_2()
-        .gap_1()
+        .gap_2()
         .items_center()
         .rounded_md()
         .cursor_pointer()
-        .text_sm()
+        .text_size(px(if primary { 13. } else { 12. }))
         .hover(|style| style.bg(colors.secondary))
         .child(icon.xsmall().text_color(colors.muted_foreground))
         .child(div().min_w_0().truncate().child(name))
@@ -609,12 +622,13 @@ fn tree_row(
 
 impl Omdbx {
     fn connection_row(&self, connection: &Connection, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_open = self.open_connections.contains(&connection.id);
+        let is_open =
+            self.open_connections.contains(&connection.id) || !self.filter.trim().is_empty();
         let id = connection.id.clone();
         let colors = cx.theme().colors;
         tree_row(
             format!("conn-{}", connection.id),
-            8.0,
+            12.0,
             Icon::new(if is_open {
                 IconName::ChevronDown
             } else {
@@ -632,300 +646,41 @@ impl Omdbx {
         )
     }
 
-
-    fn query_pane(&self, tab: &Option<Tab>, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Sidebar tree, narrowed to rows matching the search field. While a query
+    /// is active the matching branches are shown expanded and every other row
+    /// is dropped, so the tree reads as a flat result list.
+    fn tree(&self, cx: &mut Context<Self>) -> Vec<gpui_kit::AnyElement> {
         let colors = cx.theme().colors;
-        let muted = colors.muted_foreground;
-        let target = self
-            .query_target()
-            .map(|(connection, database, _)| format!("{} · {}", connection.name, database))
-            .unwrap_or_else(|| "没有连接".to_string());
+        let filter = self.filter.trim().to_lowercase();
+        let searching = !filter.is_empty();
+        let matches = |text: &str| filter.is_empty() || text.to_lowercase().contains(&filter);
 
-        v_flex()
-            .flex_1()
-            .h_full()
-            .min_w_0()
-            .child(
-                v_flex()
-                    .h(px(240.))
-                    .flex_none()
-                    .border_b_1()
-                    .border_color(colors.border)
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_size(px(13.))
-                    .child(match self.query.as_ref() {
-                        Some(state) => Editor::new(state).h(gpui_kit::relative(1.)).into_any_element(),
-                        None => div().into_any_element(),
-                    }),
-            )
-            .child(
-                h_flex()
-                    .h(px(40.))
-                    .flex_none()
-                    .px_3()
-                    .gap_2()
-                    .items_center()
-                    .border_b_1()
-                    .border_color(colors.border)
-                    .child(
-                        Button::new("run-query")
-                            .primary()
-                            .small()
-                            .label("运行")
-                            .on_click(cx.listener(|this, _, window, cx| this.run_query(window, cx))),
-                    )
-                    .child(div().text_xs().text_color(muted).child(target))
-                    .child(div().flex_1())
-                    .child(
-                        div().text_xs().text_color(muted).child(if self.loading {
-                            "执行中…".to_string()
-                        } else {
-                            match &self.error {
-                                Some(message) => message.clone(),
-                                None => format!("{} 行", self.rows.len()),
-                            }
-                        }),
-                    ),
-            )
-            .child(match self.grid.clone() {
-                Some(grid) => div()
-                    .flex_1()
-                    .min_h_0()
-                    .child(DataTable::new(&grid).stripe(true))
-                    .into_any_element(),
-                None => v_flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(format!(
-                                "在编辑器里写 SQL，⌘↵ 或点运行{}",
-                                match tab {
-                                    Some(tab) => format!("（当前表 {}）", tab.title),
-                                    None => String::new(),
-                                }
-                            )),
-                    )
-                    .into_any_element(),
-            })
-    }
-
-    fn main_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors;
-        let tab = self.active.and_then(|index| self.tabs.get(index)).cloned();
-        let muted = colors.muted_foreground;
-
-        v_flex()
-            .flex_1()
-            .h_full()
-            .min_w_0()
-            // tab strip
-            .child(
-                h_flex()
-                    .h(px(40.))
-                    .flex_none()
-                    .px_2()
-                    .gap_1()
-                    .items_center()
-                    .border_b_1()
-                    .border_color(colors.border)
-                    .children(self.tabs.iter().enumerate().map(|(index, item)| {
-                        let is_active = Some(index) == self.active;
-                        let title = item.title.clone();
-                        let close_index = index;
-                        h_flex()
-                            .id(SharedString::from(format!("tab-{}", item.key)))
-                            .h(px(28.))
-                            .px_2()
-                            .gap_2()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .text_sm()
-                            .when(is_active, |this| {
-                                this.bg(colors.secondary).text_color(colors.foreground)
-                            })
-                            .when(!is_active, |this| {
-                                this.text_color(muted)
-                                    .hover(|style| style.bg(colors.secondary))
-                            })
-                            .child(title)
-                            .child(
-                                div()
-                                    .id(SharedString::from(format!("close-{}", item.key)))
-                                    .px_1()
-                                    .rounded_sm()
-                                    .text_xs()
-                                    .text_color(muted)
-                                    .hover(|style| style.bg(colors.border))
-                                    .child("×")
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        cx.stop_propagation();
-                                        this.close_tab(close_index, window, cx);
-                                    })),
-                            )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.show_query = false;
-                                this.active = Some(index);
-                                this.load_active(window, cx);
-                            }))
-                    }))
-                    .children(self.query.as_ref().map(|_| {
-                        let is_active = self.show_query;
-                        h_flex()
-                            .id("tab-query")
-                            .h(px(28.))
-                            .px_2()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .text_sm()
-                            .when(is_active, |this| this.bg(colors.secondary).text_color(colors.foreground))
-                            .when(!is_active, |this| this.text_color(muted).hover(|style| style.bg(colors.secondary)))
-                            .child("查询")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.show_query = true;
-                                cx.notify();
-                            }))
-                    }))
-                    .child(
-                        Button::new("new-query")
-                            .ghost()
-                            .xsmall()
-                            .label("+")
-                            .on_click(cx.listener(|this, _, window, cx| this.open_query(window, cx))),
-                    ),
-            )
-            // toolbar
-            .child(
-                h_flex()
-                    .h(px(40.))
-                    .flex_none()
-                    .px_4()
-                    .gap_2()
-                    .items_center()
-                    .border_b_1()
-                    .border_color(colors.border)
-                    .text_sm()
-                    .child(match &tab {
-                        Some(tab) => tab.title.clone(),
-                        None => "选择一张表".to_string(),
-                    })
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(match &tab {
-                                Some(tab) => format!(
-                                    "{} · {}",
-                                    self.connections
-                                        .iter()
-                                        .find(|item| item.id == tab.connection_id)
-                                        .map(|item| item.name.clone())
-                                        .unwrap_or_default(),
-                                    tab.database
-                                ),
-                                None => String::new(),
-                            }),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(if self.loading {
-                                "加载中…".to_string()
-                            } else if tab.is_some() {
-                                format!("{} 行", self.rows.len())
-                            } else {
-                                String::new()
-                            }),
-                    ),
-            )
-            // body
-            .child(if self.show_query {
-                self.query_pane(&tab, cx).into_any_element()
-            } else {
-                match &tab {
-                None => v_flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .gap_2()
-                    .child(div().text_lg().child("GPUI Kit · P1"))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(match &self.error {
-                                Some(message) => format!("读取失败：{message}"),
-                                None => "在左侧展开连接和数据库，点表名打开".to_string(),
-                            }),
-                    )
-                    .into_any_element(),
-                Some(_) if self.columns.is_empty() && self.rows.is_empty() => v_flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(match &self.error {
-                                Some(message) => format!("查询失败：{message}"),
-                                None => "没有数据".to_string(),
-                            }),
-                    )
-                    .into_any_element(),
-                Some(_) => match self.grid.clone() {
-                    Some(grid) => div()
-                        .flex_1()
-                        .min_h_0()
-                        .child(DataTable::new(&grid).stripe(true))
-                        .into_any_element(),
-                    None => v_flex()
-                        .flex_1()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(muted)
-                                .child(match &self.error {
-                                    Some(message) => format!("查询失败：{message}"),
-                                    None => "没有数据".to_string(),
-                                }),
-                        )
-                        .into_any_element(),
-                }
-                }
-            })
-    }
-}
-
-impl Render for Omdbx {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors;
-        let muted = colors.muted_foreground;
-
-        // sidebar tree rows, built up front so the closure below stays simple
-        let mut tree: Vec<gpui_kit::AnyElement> = Vec::new();
+        let mut rows = Vec::new();
         for connection in &self.connections {
-            tree.push(self.connection_row(connection, cx).into_any_element());
-            if !self.open_connections.contains(&connection.id) {
-                continue;
-            }
-            for database in self.databases.get(&connection.id).cloned().unwrap_or_default() {
-                let db_open = self
-                    .open_databases
-                    .contains(&format!("{}|{}", connection.id, database));
+            let conn_match = matches(&connection.name) || matches(&connection.db_type);
+            let mut children = Vec::new();
+
+            for database in self
+                .databases
+                .get(&connection.id)
+                .cloned()
+                .unwrap_or_default()
+            {
+                let key = format!("{}|{}", connection.id, database);
+                let db_match = matches(&database);
+                let tables = self.tables.get(&key).cloned().unwrap_or_default();
+                let any_table_match = tables.iter().any(|table| matches(table));
+                if searching && !conn_match && !db_match && !any_table_match {
+                    continue;
+                }
+
+                let db_open = self.open_databases.contains(&key) || searching;
                 let conn_id = connection.id.clone();
                 let db_name = database.clone();
-                tree.push(
+                children.push(
                     tree_row(
-                        format!("db-{}|{}", connection.id, database),
-                        26.0,
+                        format!("db-{key}"),
+                        28.0,
                         Icon::new(if db_open {
                             IconName::ChevronDown
                         } else {
@@ -942,20 +697,19 @@ impl Render for Omdbx {
                 if !db_open {
                     continue;
                 }
-                for table in self
-                    .tables
-                    .get(&format!("{}|{}", connection.id, database))
-                    .cloned()
-                    .unwrap_or_default()
-                {
+
+                for table in tables {
+                    if searching && !conn_match && !db_match && !matches(&table) {
+                        continue;
+                    }
                     let conn_id = connection.id.clone();
                     let db_name = database.clone();
                     let table_name = table.clone();
-                    tree.push(
+                    children.push(
                         tree_row(
                             format!("t-{}|{}|{}", connection.id, database, table),
-                            48.0,
-                            Icon::new(AssetIcon::Grid2x2),
+                            46.0,
+                            Icon::new(AssetIcon::Table2),
                             table.clone(),
                             colors,
                             cx.listener(move |this, _, window, cx| {
@@ -966,60 +720,404 @@ impl Render for Omdbx {
                     );
                 }
             }
-        }
 
+            if searching && !conn_match && children.is_empty() {
+                continue;
+            }
+            rows.push(self.connection_row(connection, cx).into_any_element());
+            if self.open_connections.contains(&connection.id) || searching {
+                rows.extend(children);
+            }
+        }
+        rows
+    }
+
+    fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors;
+        let muted = colors.muted_foreground;
+        v_flex()
+            .w(px(232.))
+            .h_full()
+            .flex_none()
+            .bg(colors.sidebar)
+            .border_r_1()
+            .border_color(colors.sidebar_border)
+            // transparent titlebar: the traffic lights sit over this strip
+            .child(TitleBar::new().h(px(44.)))
+            .child(
+                h_flex()
+                    .h(px(34.))
+                    .px_3()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(16.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("OMDBX"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(muted)
+                            .child(format!("{} 连接", self.connections.len())),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .mx_3()
+                    .my_2()
+                    .h(px(32.))
+                    .px_2()
+                    .rounded_md()
+                    .bg(colors.secondary)
+                    .child(
+                        Input::new(&self.search)
+                            .appearance(false)
+                            .bordered(false)
+                            .small()
+                            .cleanable(true)
+                            .prefix(Icon::new(AssetIcon::Search).xsmall().text_color(muted)),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .id("sidebar-tree")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .pb_2()
+                    .children(self.tree(cx)),
+            )
+    }
+
+    fn empty_state(
+        title: &'static str,
+        hint: String,
+        colors: gpui_kit::component::ThemeColor,
+    ) -> impl IntoElement {
+        v_flex()
+            .flex_1()
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .child(
+                Icon::new(AssetIcon::Table2)
+                    .with_size(px(28.))
+                    .text_color(colors.muted_foreground),
+            )
+            .child(
+                div()
+                    .text_size(px(14.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(title),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(colors.muted_foreground)
+                    .child(hint),
+            )
+    }
+
+    fn query_pane(&self, tab: &Option<Tab>, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors;
+        v_flex()
+            .flex_1()
+            .h_full()
+            .min_w_0()
+            .child(
+                v_flex()
+                    .h(px(240.))
+                    .flex_none()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_size(px(13.))
+                    .child(match self.query.as_ref() {
+                        Some(state) => Editor::new(state)
+                            .h(gpui_kit::relative(1.))
+                            .into_any_element(),
+                        None => div().into_any_element(),
+                    }),
+            )
+            .child(match self.grid.clone() {
+                Some(grid) => div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(DataTable::new(&grid).stripe(true))
+                    .into_any_element(),
+                None => Self::empty_state(
+                    "写一条 SQL 然后运行",
+                    match tab {
+                        Some(tab) => format!("⌘↵ 运行，当前表 {}", tab.title),
+                        None => "⌘↵ 运行".to_string(),
+                    },
+                    colors,
+                )
+                .into_any_element(),
+            })
+    }
+
+    fn main_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors;
+        let muted = colors.muted_foreground;
+        let tab = self.active.and_then(|index| self.tabs.get(index)).cloned();
+
+        let title = if self.show_query {
+            "查询".to_string()
+        } else {
+            tab.as_ref()
+                .map(|tab| tab.title.clone())
+                .unwrap_or_else(|| "选择一张表".to_string())
+        };
+        let meta = if self.show_query {
+            self.query_target()
+                .map(|(connection, database, _)| format!("{} · {}", connection.name, database))
+                .unwrap_or_default()
+        } else {
+            tab.as_ref()
+                .map(|tab| {
+                    format!(
+                        "{} · {}",
+                        self.connections
+                            .iter()
+                            .find(|item| item.id == tab.connection_id)
+                            .map(|item| item.name.clone())
+                            .unwrap_or_default(),
+                        tab.database
+                    )
+                })
+                .unwrap_or_default()
+        };
+        let status = if self.loading {
+            "加载中…".to_string()
+        } else if self.show_query || tab.is_some() {
+            format!("{} 行", self.rows.len())
+        } else {
+            String::new()
+        };
+
+        v_flex()
+            .flex_1()
+            .h_full()
+            .min_w_0()
+            .bg(colors.background)
+            // tab strip
+            .child(
+                h_flex()
+                    .h(px(44.))
+                    .flex_none()
+                    .px_3()
+                    .gap_1()
+                    .items_center()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .children(self.tabs.iter().enumerate().map(|(index, item)| {
+                        let is_active = Some(index) == self.active && !self.show_query;
+                        let title = item.title.clone();
+                        let close_index = index;
+                        self.tab_chip(
+                            format!("tab-{}", item.key),
+                            AssetIcon::Table2,
+                            title,
+                            is_active,
+                            Some(close_index),
+                            colors,
+                            cx,
+                        )
+                    }))
+                    .children(self.query.as_ref().map(|_| {
+                        self.tab_chip(
+                            "tab-query".to_string(),
+                            AssetIcon::SquareTerminal,
+                            "查询".to_string(),
+                            self.show_query,
+                            None,
+                            colors,
+                            cx,
+                        )
+                    }))
+                    .child(
+                        Button::new("new-query")
+                            .ghost()
+                            .xsmall()
+                            .icon(Icon::new(AssetIcon::Plus).xsmall())
+                            .tooltip("新建查询")
+                            .on_click(cx.listener(|this, _, window, cx| this.open_query(window, cx))),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("refresh")
+                            .ghost()
+                            .xsmall()
+                            .icon(Icon::new(AssetIcon::RefreshCw).xsmall())
+                            .tooltip("刷新连接")
+                            .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
+                    ),
+            )
+            // context bar: what is open, on which connection, and the actions
+            .child(
+                h_flex()
+                    .h(px(44.))
+                    .flex_none()
+                    .px_4()
+                    .gap_3()
+                    .items_center()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
+                    )
+                    .child(div().text_size(px(12.)).text_color(muted).child(meta))
+                    .child(div().flex_1())
+                    .when(self.show_query, |this| {
+                        this.child(
+                            Button::new("run-query")
+                                .primary()
+                                .small()
+                                .icon(Icon::new(AssetIcon::Play).xsmall())
+                                .label("运行")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.run_query(window, cx)
+                                })),
+                        )
+                    })
+                    .child(div().text_size(px(12.)).text_color(muted).child(status)),
+            )
+            // body
+            .child(if self.show_query {
+                self.query_pane(&tab, cx).into_any_element()
+            } else {
+                match &tab {
+                    None => Self::empty_state(
+                        "选择一张表",
+                        match &self.error {
+                            Some(message) => format!("读取失败：{message}"),
+                            None => "在左侧展开连接和数据库，点表名打开".to_string(),
+                        },
+                        colors,
+                    )
+                    .into_any_element(),
+                    Some(_) if self.columns.is_empty() && self.rows.is_empty() => {
+                        Self::empty_state(
+                            "没有数据",
+                            match &self.error {
+                                Some(message) => format!("查询失败：{message}"),
+                                None => "这张表是空的".to_string(),
+                            },
+                            colors,
+                        )
+                        .into_any_element()
+                    }
+                    Some(_) => match self.grid.clone() {
+                        Some(grid) => div()
+                            .flex_1()
+                            .min_h_0()
+                            .child(DataTable::new(&grid).stripe(true))
+                            .into_any_element(),
+                        None => Self::empty_state(
+                            "没有数据",
+                            match &self.error {
+                                Some(message) => format!("查询失败：{message}"),
+                                None => "这张表是空的".to_string(),
+                            },
+                            colors,
+                        )
+                        .into_any_element(),
+                    },
+                }
+            })
+    }
+
+    /// One tab in the strip: icon, title, optional close button.
+    fn tab_chip(
+        &self,
+        id: String,
+        icon: AssetIcon,
+        title: String,
+        is_active: bool,
+        close: Option<usize>,
+        colors: gpui_kit::component::ThemeColor,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let muted = colors.muted_foreground;
+        let chip = h_flex()
+            .id(SharedString::from(id.clone()))
+            .h(px(30.))
+            .px_2()
+            .gap_1()
+            .items_center()
+            .rounded_md()
+            .cursor_pointer()
+            .text_size(px(13.))
+            .when(is_active, |this| {
+                this.bg(colors.secondary).text_color(colors.foreground)
+            })
+            .when(!is_active, |this| {
+                this.text_color(muted)
+                    .hover(|style| style.bg(colors.secondary))
+            })
+            .child(Icon::new(icon).xsmall())
+            .child(div().max_w(px(180.)).truncate().child(title));
+        match close {
+            Some(index) => chip
+                .child(
+                    div()
+                        .id(SharedString::from(format!("close-{id}")))
+                        .px_1()
+                        .rounded_sm()
+                        .text_xs()
+                        .text_color(muted)
+                        .hover(|style| style.bg(colors.border))
+                        .child("×")
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.close_tab(index, window, cx);
+                        })),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.show_query = false;
+                    this.active = Some(index);
+                    this.load_active(window, cx);
+                }))
+                .into_any_element(),
+            None => chip
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.show_query = true;
+                    cx.notify();
+                }))
+                .into_any_element(),
+        }
+    }
+}
+
+impl Render for Omdbx {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors;
         h_flex()
             .size_full()
             .bg(colors.background)
             .text_color(colors.foreground)
-            .child(
-                v_flex()
-                    .w(px(248.))
-                    .h_full()
-                    .flex_none()
-                    .bg(colors.sidebar)
-                    .border_r_1()
-                    .border_color(colors.sidebar_border)
-                    .child(
-                        h_flex()
-                            .h(px(44.))
-                            .flex_none()
-                            .px_3()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(muted)
-                                    .child(format!("我的连接  {}", self.connections.len())),
-                            )
-                            .child(
-                                Button::new("refresh")
-                                    .ghost()
-                                    .xsmall()
-                                    .label("刷新")
-                                    .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_hidden()
-                            .py_1()
-                            .children(tree),
-                    ),
-            )
+            .child(self.sidebar(cx))
             .child(self.main_pane(cx))
     }
 }
 
 fn main() {
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(gpui_kit::assets::AllAssets)
         .run(|cx: &mut App| {
         gpui_kit::init(cx);
-        Theme::update(cx, |theme| theme.mode = ThemeMode::Light);
+        Theme::update(cx, |theme| {
+            theme.mode = ThemeMode::Light;
+            // flatten the titlebar into the sidebar, like the rest of the shell
+            theme.colors.title_bar = theme.colors.sidebar;
+            theme.colors.title_bar_border = theme.colors.sidebar_border;
+        });
         gpui_kit::open_window(
             WindowOptions {
                 focus: true,
@@ -1028,10 +1126,13 @@ fn main() {
                     gpui_kit::size(px(1100.), px(700.)),
                     cx,
                 ))),
-                ..Default::default()
+                window_min_size: Some(gpui_kit::size(px(900.), px(560.))),
+                // transparent titlebar owned by the app, so the sidebar can run
+                // to the top edge under the traffic lights
+                ..TitleBar::window_options()
             },
             cx,
-            |_, cx| cx.new(|_| Omdbx::new()),
+            |window, cx| cx.new(|cx| Omdbx::new(window, cx)),
         )
         .expect("failed to open window");
         cx.activate(true);
