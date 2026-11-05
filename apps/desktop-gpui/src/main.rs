@@ -269,15 +269,6 @@ impl TableDelegate for GridDelegate {
         })
     }
 
-    fn render_tr(
-        &mut self,
-        row_ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
-    ) -> gpui_kit::Stateful<gpui_kit::Div> {
-        div().id(("row", row_ix)).px(px(2.))
-    }
-
     fn render_th(
         &mut self,
         col_ix: usize,
@@ -291,7 +282,6 @@ impl TableDelegate for GridDelegate {
             .items_center()
             .text_size(px(12.))
             .font_weight(FontWeight::MEDIUM)
-            .child(div().w(px(2.)))
             .when(col_ix == 0, |this| this.child(div().w(px(12.))))
             .when(col_ix > 0, |this| {
                 this.child(
