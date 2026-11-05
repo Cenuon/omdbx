@@ -861,8 +861,6 @@ impl Omdbx {
         div()
             .size_full()
             .rounded(px(10.))
-            .border_1()
-            .border_color(colors.border)
             .child(
                 div()
                     .relative()
@@ -938,7 +936,6 @@ impl Omdbx {
                 Some(grid) => div()
                     .flex_1()
                     .min_h_0()
-                    .p(px(8.))
                     .child(self.table_frame(&grid, colors))
                     .into_any_element(),
                 None => Self::empty_state(
@@ -1116,7 +1113,6 @@ impl Omdbx {
                         Some(grid) => div()
                             .flex_1()
                             .min_h_0()
-                            .p(px(8.))
                             .child(self.table_frame(&grid, colors))
                             .into_any_element(),
                         None => Self::empty_state(
@@ -1280,8 +1276,6 @@ impl Omdbx {
                     .bg(colors.background)
                     .border_1()
                     .border_color(colors.border)
-                    // content must not reach the bottom corner arcs
-                    .pb(px(10.))
                     .child(self.main_pane(cx)),
             )
     }
