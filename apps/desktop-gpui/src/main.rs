@@ -613,7 +613,7 @@ fn tree_row(
         .rounded_md()
         .cursor_pointer()
         .text_size(px(if primary { 13. } else { 12. }))
-        .hover(|style| style.bg(colors.secondary))
+        .hover(|style| style.bg(colors.sidebar_accent))
         .child(icon.xsmall().text_color(colors.muted_foreground))
         .child(div().min_w_0().truncate().child(name))
         .child(div().flex_1())
@@ -1100,7 +1100,7 @@ impl Render for Omdbx {
         let colors = cx.theme().colors;
         h_flex()
             .size_full()
-            .bg(colors.background)
+            .bg(colors.sidebar)
             .text_color(colors.foreground)
             .child(
                 h_resizable("shell")
@@ -1112,7 +1112,23 @@ impl Render for Omdbx {
                             .fixed()
                             .child(self.sidebar(cx)),
                     )
-                    .child(resizable_panel().child(self.main_pane(cx))),
+                    .child(
+                        resizable_panel().child(
+                            div()
+                                .h_full()
+                                .w_full()
+                                // a small gap so the content reads as a card
+                                .p(px(8.))
+                                .child(
+                                    v_flex()
+                                        .size_full()
+                                        .rounded(px(10.))
+                                        .overflow_hidden()
+                                        .bg(colors.background)
+                                        .child(self.main_pane(cx)),
+                                ),
+                        ),
+                    ),
             )
     }
 }
@@ -1124,6 +1140,8 @@ fn main() {
         gpui_kit::init(cx);
         Theme::update(cx, |theme| {
             theme.mode = ThemeMode::Light;
+            // the shell background; the content card floats on it
+            theme.colors.sidebar = gpui_kit::rgb(0xE9E9EC).into();
             // flatten the titlebar into the sidebar, like the rest of the shell
             theme.colors.title_bar = theme.colors.sidebar;
             theme.colors.title_bar_border = theme.colors.sidebar;
