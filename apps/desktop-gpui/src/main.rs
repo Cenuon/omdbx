@@ -827,6 +827,41 @@ impl Omdbx {
             )
     }
 
+    /// Table with an outer frame, a small gap, and a rounded content area.
+    fn table_frame(
+        &self,
+        grid: &Entity<TableState<GridDelegate>>,
+        colors: gpui_kit::component::ThemeColor,
+    ) -> impl IntoElement {
+        div()
+            .size_full()
+            .rounded(px(10.))
+            .border_1()
+            .border_color(colors.border)
+            .p(px(5.))
+            .child(
+                div()
+                    .relative()
+                    .size_full()
+                    .rounded(px(6.))
+                    .bg(colors.background)
+                    .overflow_hidden()
+                    // the table head is transparent, so this rounded band is
+                    // what gives the content area its top corners
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .h(px(40.))
+                            .rounded_t(px(6.))
+                            .bg(gpui_kit::rgb(0xFAFAFA)),
+                    )
+                    .child(DataTable::new(grid).bordered(false).large()),
+            )
+    }
+
     fn empty_state(
         title: &'static str,
         hint: String,
@@ -879,7 +914,8 @@ impl Omdbx {
                 Some(grid) => div()
                     .flex_1()
                     .min_h_0()
-                    .child(DataTable::new(&grid).stripe(true).bordered(false).large())
+                    .p(px(8.))
+                    .child(self.table_frame(&grid, colors))
                     .into_any_element(),
                 None => Self::empty_state(
                     "写一条 SQL 然后运行",
@@ -1056,7 +1092,8 @@ impl Omdbx {
                         Some(grid) => div()
                             .flex_1()
                             .min_h_0()
-                            .child(DataTable::new(&grid).stripe(true).bordered(false).large())
+                            .p(px(8.))
+                            .child(self.table_frame(&grid, colors))
                             .into_any_element(),
                         None => Self::empty_state(
                             "没有数据",
@@ -1289,6 +1326,9 @@ fn main() {
             theme.mode = ThemeMode::Light;
             // the shell background; the content card floats on it
             theme.colors.sidebar = gpui_kit::rgb(0xF9F9F9).into();
+            // the table draws its own rounded header band and sits on the card
+            theme.tokens.table = gpui_kit::transparent_black().into();
+            theme.tokens.table_head = gpui_kit::transparent_black().into();
             // flatten the titlebar into the sidebar, like the rest of the shell
             theme.colors.title_bar = theme.colors.sidebar;
             theme.colors.title_bar_border = theme.colors.sidebar;
