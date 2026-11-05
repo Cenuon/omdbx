@@ -1106,7 +1106,7 @@ impl Render for Omdbx {
                     .with_handle_appearance(split_handle())
                     .child(
                         resizable_panel()
-                            .size(px(300.))
+                            .size(px(280.))
                             .size_range(px(180.)..px(420.))
                             .fixed()
                             .child(self.sidebar(cx)),
