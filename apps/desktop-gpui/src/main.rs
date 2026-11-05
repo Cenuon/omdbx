@@ -742,7 +742,7 @@ impl Omdbx {
             .h_full()
             .bg(colors.sidebar)
             // transparent titlebar: the traffic lights sit over this strip
-            .child(TitleBar::new().h(px(44.)))
+            .child(TitleBar::new().h(px(44.)).bg(colors.sidebar))
             .child(
                 h_flex()
                     .h(px(34.))
@@ -899,7 +899,6 @@ impl Omdbx {
             .flex_1()
             .h_full()
             .min_w_0()
-            .bg(colors.background)
             // tab strip
             .child(
                 h_flex()
@@ -1125,6 +1124,8 @@ impl Render for Omdbx {
                                         .rounded(px(10.))
                                         .overflow_hidden()
                                         .bg(colors.background)
+                                        // content must not reach the bottom corner arcs
+                                        .pb(px(10.))
                                         .child(self.main_pane(cx)),
                                 ),
                         ),
