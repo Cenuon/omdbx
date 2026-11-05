@@ -877,7 +877,8 @@ impl Omdbx {
                             .left_0()
                             .right_0()
                             .h(px(40.))
-                            .rounded_t(px(6.))
+                            .border_t_1()
+                            .border_color(colors.border)
                             .bg(gpui_kit::rgb(0xFAFAFA)),
                     )
                     .child(DataTable::new(grid).bordered(false).large()),
