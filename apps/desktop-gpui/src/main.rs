@@ -1098,16 +1098,16 @@ impl Omdbx {
     /// "collapse", matching the states the button switches between.
     fn sidebar_glyph(open: bool, color: Hsla) -> impl IntoElement {
         let frame = div()
-            .w(px(20.))
-            .h(px(17.))
+            .w(px(16.))
+            .h(px(16.))
             .flex_none()
-            .rounded(px(2.5))
+            .rounded(px(2.))
             .border_1()
             .border_color(color);
         if open {
-            frame.child(div().h_full().w(px(1.)).ml(px(5.)).bg(color))
+            frame.child(div().h_full().w(px(1.)).ml(px(4.)).bg(color))
         } else {
-            frame.child(div().h_full().w(px(6.)).bg(color))
+            frame.child(div().h_full().w(px(5.)).bg(color))
         }
     }
 
