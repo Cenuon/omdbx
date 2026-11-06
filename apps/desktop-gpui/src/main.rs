@@ -827,6 +827,19 @@ impl Omdbx {
         cx.notify();
     }
 
+    fn close_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.query = None;
+        self.show_query = false;
+        if self.active.is_some() {
+            self.load_active(window, cx);
+        } else {
+            self.grid = None;
+            self.columns.clear();
+            self.rows.clear();
+            cx.notify();
+        }
+    }
+
     fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index >= self.tabs.len() {
             return;
@@ -1294,7 +1307,7 @@ impl Omdbx {
                             AssetIcon::SquareTerminal,
                             "查询".to_string(),
                             self.show_query,
-                            None,
+                            Some(usize::MAX),
                             colors,
                             cx,
                         )
@@ -1482,7 +1495,11 @@ impl Omdbx {
                         .child(Icon::new(AssetIcon::X).with_size(px(14.)))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
-                            this.close_tab(index, window, cx);
+                            if index == usize::MAX {
+                                this.close_query(window, cx);
+                            } else {
+                                this.close_tab(index, window, cx);
+                            }
                         })),
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
