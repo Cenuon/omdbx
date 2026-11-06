@@ -1371,6 +1371,8 @@ impl Omdbx {
                             .open(self.tools_open)
                             .content(
                                 v_flex()
+                                    .w_full()
+                                    .bg(gpui_kit::rgb(0xF2F2F4))
                                     .gap(px(1.))
                                     .child(tree_row(
                                         "tool-transfer".to_string(),
