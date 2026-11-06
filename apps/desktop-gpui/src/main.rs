@@ -1606,7 +1606,11 @@ impl Render for Omdbx {
                                 .flex_1()
                                 .h_full()
                                 .min_w_0()
-                                .child(self.tab_bar(false, cx))
+                                // no tabs yet: no empty strip and no +, the card
+                                // starts at the top of the window
+                                .when(!self.tabs.is_empty() || self.query.is_some(), |this| {
+                                    this.child(self.tab_bar(false, cx))
+                                })
                                 .child(self.content_card(cx))
                                 .into_any_element(),
                         ),
