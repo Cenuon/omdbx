@@ -1570,6 +1570,10 @@ impl Omdbx {
             .min_w_0()
             .px(px(8.))
             .pb(px(8.))
+            // no tab strip: keep the same 8px gap at the top as the sides
+            .when(self.tabs.is_empty() && self.query.is_none(), |this| {
+                this.pt(px(8.))
+            })
             .child(
                 v_flex()
                     .size_full()
