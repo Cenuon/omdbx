@@ -1405,10 +1405,9 @@ fn tree_row(
     colors: gpui_kit::component::ThemeColor,
     on_click: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let primary = indent <= 14.;
     h_flex()
         .id(SharedString::from(id))
-        .h(px(if primary { 32. } else { 28. }))
+        .h(px(32.))
         .mx_2()
         .pl(px(indent))
         .pr_2()
@@ -1494,11 +1493,7 @@ impl Omdbx {
                     tree_row(
                         format!("db-{key}"),
                         28.0,
-                        Icon::new(if db_open {
-                            IconName::ChevronDown
-                        } else {
-                            IconName::ChevronRight
-                        }),
+                        Icon::new(AssetIcon::Database),
                         database.clone(),
                         colors,
                         cx.listener(move |this, _, _, cx| {
