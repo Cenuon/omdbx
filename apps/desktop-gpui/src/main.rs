@@ -520,6 +520,9 @@ struct Omdbx {
     search: Entity<InputState>,
     filter: String,
     sidebar_open: bool,
+    notice: Option<String>,
+    notice_id: u64,
+    tools_open: bool,
 }
 
 impl Omdbx {
@@ -565,6 +568,9 @@ impl Omdbx {
             search,
             filter: String::new(),
             sidebar_open: true,
+            notice: None,
+            notice_id: 0,
+            tools_open: false,
         }
     }
 
@@ -726,6 +732,25 @@ impl Omdbx {
         cx.notify();
     }
 
+
+    fn show_notice(&mut self, message: &str, cx: &mut Context<Self>) {
+        self.notice = Some(message.to_string());
+        self.notice_id = self.notice_id.wrapping_add(1);
+        let id = self.notice_id;
+        cx.notify();
+        cx.spawn(async move |weak, cx| {
+            cx.background_executor()
+                .timer(Duration::from_secs(2))
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.notice_id == id {
+                    this.notice = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
 
     fn open_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.query.is_none() {
@@ -988,6 +1013,92 @@ impl Omdbx {
                             .items_center()
                             .child(self.sidebar_toggle(cx)),
                     ),
+            )
+            .child(
+                v_flex()
+                    .flex_none()
+                    .pt_1()
+                    .gap(px(1.))
+                    .child(tree_row(
+                        "menu-add-connection".to_string(),
+                        12.,
+                        Icon::new(AssetIcon::Plug),
+                        "新增连接".to_string(),
+                        colors,
+                        cx.listener(|this, _, _, cx| this.show_notice("连接向导未完成", cx)),
+                    ))
+                    .child(tree_row(
+                        "menu-new-query".to_string(),
+                        12.,
+                        Icon::new(AssetIcon::SquareTerminal),
+                        "新增查询".to_string(),
+                        colors,
+                        cx.listener(|this, _, window, cx| this.open_query(window, cx)),
+                    ))
+                    .child(
+                        tree_row(
+                            "menu-tools".to_string(),
+                            12.,
+                            Icon::new(AssetIcon::Wrench),
+                            "常用工具".to_string(),
+                            colors,
+                            cx.listener(|this, _, _, cx| {
+                                this.tools_open = !this.tools_open;
+                                cx.notify();
+                            }),
+                        )
+                        .child(
+                            Icon::new(if self.tools_open {
+                                IconName::ChevronDown
+                            } else {
+                                IconName::ChevronRight
+                            })
+                            .xsmall()
+                            .text_color(colors.muted_foreground),
+                        ),
+                    )
+                    .when(self.tools_open, |this| {
+                        this.child(tree_row(
+                            "tool-transfer".to_string(),
+                            40.,
+                            Icon::new(AssetIcon::ArrowLeftRight),
+                            "数据传输".to_string(),
+                            colors,
+                            cx.listener(|this, _, _, cx| this.show_notice("数据传输未完成", cx)),
+                        ))
+                        .child(tree_row(
+                            "tool-backup".to_string(),
+                            40.,
+                            Icon::new(AssetIcon::DatabaseBackup),
+                            "数据备份".to_string(),
+                            colors,
+                            cx.listener(|this, _, _, cx| this.show_notice("数据备份未完成", cx)),
+                        ))
+                        .child(tree_row(
+                            "tool-compare-schema".to_string(),
+                            40.,
+                            Icon::new(AssetIcon::GitCompare),
+                            "比较结构".to_string(),
+                            colors,
+                            cx.listener(|this, _, _, cx| this.show_notice("比较结构未完成", cx)),
+                        ))
+                        .child(tree_row(
+                            "tool-compare-data".to_string(),
+                            40.,
+                            Icon::new(AssetIcon::GitCompareArrows),
+                            "比较数据".to_string(),
+                            colors,
+                            cx.listener(|this, _, _, cx| this.show_notice("比较数据未完成", cx)),
+                        ))
+                        .child(tree_row(
+                            "tool-mcp".to_string(),
+                            40.,
+                            Icon::new(AssetIcon::Server),
+                            "MCP 设置".to_string(),
+                            colors,
+                            cx.listener(|this, _, _, cx| this.show_notice("MCP 设置未完成", cx)),
+                        ))
+                    }),
             )
             .child(
                 h_flex()
@@ -1475,7 +1586,7 @@ impl Omdbx {
 impl Render for Omdbx {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
-        if self.sidebar_open {
+        let shell: gpui_kit::AnyElement = if self.sidebar_open {
             h_flex()
                 .size_full()
                 .bg(colors.sidebar)
@@ -1500,6 +1611,7 @@ impl Render for Omdbx {
                                 .into_any_element(),
                         ),
                 )
+                .into_any_element()
         } else {
             v_flex()
                 .size_full()
@@ -1522,7 +1634,34 @@ impl Render for Omdbx {
                         ),
                 )
                 .child(self.content_card(cx))
-        }
+                .into_any_element()
+        };
+
+        div()
+            .relative()
+            .size_full()
+            .child(shell)
+            .when_some(self.notice.clone(), |this, notice| {
+                this.child(
+                    div()
+                        .absolute()
+                        .bottom(px(24.))
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .child(
+                            div()
+                                .px(px(16.))
+                                .py(px(8.))
+                                .rounded_md()
+                                .bg(colors.foreground)
+                                .text_color(colors.background)
+                                .text_size(px(13.))
+                                .child(notice),
+                        ),
+                )
+            })
     }
 }
 
