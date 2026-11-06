@@ -10,6 +10,7 @@ use std::time::Duration;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::collapsible::Collapsible;
 use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableState};
 use gpui_kit::component::{
     h_flex, v_flex, ActiveTheme, Icon, IconName, Sizable, Theme, ThemeMode, TitleBar,
@@ -18,11 +19,14 @@ use gpui_kit::assets::IconName as AssetIcon;
 use gpui_kit::base::{h_resizable, resizable_panel, ResizeHandleRenderer};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    div, px, App, Context, Entity, FontFeatures, FontWeight, Hsla, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, Styled, Window, WindowOptions,
+    div, px, App, Context, Entity, FocusHandle, FontFeatures, FontWeight, Hsla,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Window,
+    WindowOptions,
 };
 use serde::Deserialize;
 use serde_json::json;
+
+gpui_kit::actions!(omdbx, [RefreshConnections]);
 
 const API: &str = "http://127.0.0.1:4224";
 const ROW_LIMIT: usize = 200;
@@ -677,6 +681,7 @@ struct Omdbx {
     show_comments: bool,
     update: Option<UpdateInfo>,
     search_open: bool,
+    focus_handle: FocusHandle,
 }
 
 impl Omdbx {
@@ -740,6 +745,7 @@ impl Omdbx {
             show_comments: true,
             update: None,
             search_open: false,
+            focus_handle: cx.focus_handle(),
         };
         this.check_for_update(cx);
         this
@@ -903,6 +909,149 @@ impl Omdbx {
             });
         })
         .detach();
+    }
+
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        match fetch_connections() {
+            Ok(list) => {
+                self.connections = list;
+                self.error = None;
+                self.databases.clear();
+                self.tables.clear();
+            }
+            Err(message) => self.error = Some(message),
+        }
+        cx.notify();
+    }
+
+    /// Section header above the connection tree: title on the left, search and
+    /// connection actions on the right. Clicking search swaps the whole row for
+    /// an input, matching the reference layout.
+    fn connections_header(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let colors = cx.theme().colors;
+        let muted = colors.muted_foreground;
+        if self.search_open {
+            return h_flex()
+                .mx_3()
+                .mt_3()
+                .mb_2()
+                .h(px(40.))
+                .px_2()
+                .rounded_lg()
+                .bg(colors.background)
+                .border_1()
+                .border_color(colors.border)
+                .child(
+                    Input::new(&self.search)
+                        .appearance(false)
+                        .bordered(false)
+                        .text_size(px(13.))
+                        .cleanable(true)
+                        .prefix(
+                            Icon::new(AssetIcon::Search)
+                                .with_size(px(16.))
+                                .text_color(muted),
+                        ),
+                )
+                .into_any_element();
+        }
+
+        let weak = cx.entity().downgrade();
+        let focus_handle = self.focus_handle.clone();
+        let settings = Button::new("connections-settings")
+            .ghost()
+            .with_size(gpui_kit::component::Size::Size(px(28.)))
+            .icon(
+                Icon::new(AssetIcon::SlidersHorizontal)
+                    .with_size(px(16.))
+                    .text_color(muted),
+            )
+            .dropdown_menu_with_anchor(gpui_kit::Anchor::TopRight, move |menu, _, _| {
+                let menu = menu
+                    .action_context(focus_handle.clone())
+                    .min_w(px(180.));
+                let new_connection = weak.clone();
+                let close_all = weak.clone();
+                let manage = weak.clone();
+                let new_group = weak.clone();
+                menu.item(PopupMenuItem::new("新建连接").on_click(move |_, _, cx| {
+                    let _ = new_connection.update(cx, |this, cx| {
+                        this.show_notice("连接向导未完成", cx)
+                    });
+                }))
+                .item(
+                    PopupMenuItem::new("关闭所有连接").on_click(move |_, _, cx| {
+                        let _ = close_all.update(cx, |this, cx| {
+                            this.open_connections.clear();
+                            this.databases.clear();
+                            this.tables.clear();
+                            cx.notify();
+                        });
+                    }),
+                )
+                .item(PopupMenuItem::new("管理连接...").on_click(move |_, _, cx| {
+                    let _ = manage.update(cx, |this, cx| this.show_notice("管理连接未完成", cx));
+                }))
+                .separator()
+                .item(PopupMenuItem::new("新建组").on_click(move |_, _, cx| {
+                    let _ = new_group.update(cx, |this, cx| this.show_notice("分组未完成", cx));
+                }))
+                .separator()
+                .item(
+                    PopupMenuItem::new("刷新")
+                        .action(Box::new(RefreshConnections))
+                        .on_click({
+                            let refresh = weak.clone();
+                            move |_, _, cx| {
+                                let _ = refresh.update(cx, |this, cx| this.reload(cx));
+                            }
+                        }),
+                )
+            });
+
+        h_flex()
+            .mx_2()
+            .mt_3()
+            .mb_2()
+            .h(px(32.))
+            .pl_3()
+            .pr_1()
+            .gap_1()
+            .items_center()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(13.))
+                    .text_color(muted)
+                    .child("我的链接"),
+            )
+            .child(Self::icon_button(
+                "connections-search",
+                Icon::new(AssetIcon::Search)
+                    .with_size(px(16.))
+                    .text_color(muted)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, window, cx| {
+                    this.search_open = true;
+                    this.search
+                        .update(cx, |state, cx| state.focus(window, cx));
+                    cx.notify();
+                }),
+            ))
+            .child(settings)
+            .child(Self::icon_button(
+                "connections-add",
+                Icon::new(AssetIcon::Plus)
+                    .with_size(px(16.))
+                    .text_color(muted)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, _, cx| this.show_notice("连接向导未完成", cx)),
+            ))
+            .into_any_element()
     }
 
     fn show_notice(&mut self, message: &str, cx: &mut Context<Self>) {
@@ -1299,7 +1448,6 @@ impl Omdbx {
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
-        let muted = colors.muted_foreground;
         v_flex()
             .w_full()
             .h_full()
@@ -1325,8 +1473,8 @@ impl Omdbx {
             .child(
                 v_flex()
                     .flex_none()
-                    .pt_1()
-                    .gap(px(1.))
+                    .pt_2()
+                    .gap(px(2.))
                     .child(tree_row(
                         "menu-add-connection".to_string(),
                         12.,
@@ -1426,44 +1574,7 @@ impl Omdbx {
                                     )),
                             ),
                     )
-                    .when(self.search_open, |this| {
-                        this.child(
-                            h_flex()
-                                .mx_3()
-                                .my_1()
-                                .h(px(32.))
-                                .px_2()
-                                .rounded_md()
-                                .bg(gpui_kit::rgb(0xECECEE))
-                                .child(
-                                    Input::new(&self.search)
-                                        .appearance(false)
-                                        .bordered(false)
-                                        .text_size(px(13.))
-                                        .cleanable(true)
-                                        .prefix(
-                                            Icon::new(AssetIcon::Search)
-                                                .with_size(px(16.))
-                                                .text_color(muted),
-                                        ),
-                                ),
-                        )
-                    })
-                    .when(!self.search_open, |this| {
-                        this.child(tree_row(
-                            "menu-search".to_string(),
-                            12.,
-                            Icon::new(AssetIcon::Search),
-                            "搜索".to_string(),
-                            colors,
-                            cx.listener(|this, _, window, cx| {
-                                this.search_open = true;
-                                this.search
-                                    .update(cx, |state, cx| state.focus(window, cx));
-                                cx.notify();
-                            }),
-                        ))
-                    }),
+                    .child(self.connections_header(cx)),
             )
             .child(
                 v_flex()
@@ -2228,6 +2339,8 @@ impl Render for Omdbx {
         div()
             .relative()
             .size_full()
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|this, _: &RefreshConnections, _, cx| this.reload(cx)))
             .child(shell)
             .when_some(self.notice.clone(), |this, notice| {
                 this.child(
@@ -2258,6 +2371,11 @@ fn main() {
         .with_assets(gpui_kit::assets::AllAssets)
         .run(|cx: &mut App| {
         gpui_kit::init(cx);
+        cx.bind_keys([gpui_kit::KeyBinding::new(
+            "cmd-r",
+            RefreshConnections,
+            None,
+        )]);
         Theme::update(cx, |theme| {
             theme.mode = ThemeMode::Light;
             // the shell background; the content card floats on it
