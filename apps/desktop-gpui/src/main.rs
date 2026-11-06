@@ -65,6 +65,8 @@ struct Connection {
     name: String,
     db_type: String,
     #[serde(default)]
+    driver_profile: Option<String>,
+    #[serde(default)]
     host: Option<String>,
     #[serde(default)]
     port: Option<u16>,
@@ -673,16 +675,25 @@ struct Omdbx {
     column_meta: Vec<ColumnMeta>,
     show_comments: bool,
     update: Option<UpdateInfo>,
+    search_open: bool,
 }
 
 impl Omdbx {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索连接或表"));
-        cx.subscribe(&search, |this, state, event: &InputEvent, cx| {
-            if let InputEvent::Change = event {
+        cx.subscribe(&search, |this, state, event: &InputEvent, cx| match event {
+            InputEvent::Change => {
                 this.filter = state.read(cx).value().to_string();
                 cx.notify();
             }
+            InputEvent::Blur => {
+                if this.search_open {
+                    this.search_open = false;
+                    this.filter.clear();
+                    cx.notify();
+                }
+            }
+            _ => {}
         })
         .detach();
         let (connections, error) = match fetch_connections() {
@@ -727,22 +738,10 @@ impl Omdbx {
             column_meta: Vec::new(),
             show_comments: true,
             update: None,
+            search_open: false,
         };
         this.check_for_update(cx);
         this
-    }
-
-    fn reload(&mut self, cx: &mut Context<Self>) {
-        match fetch_connections() {
-            Ok(list) => {
-                self.connections = list;
-                self.error = None;
-                self.databases.clear();
-                self.tables.clear();
-            }
-            Err(message) => self.error = Some(message),
-        }
-        cx.notify();
     }
 
     fn toggle_connection(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -1097,6 +1096,57 @@ impl Omdbx {
     }
 }
 
+macro_rules! db_icon {
+    ($name:literal) => {
+        include_bytes!(concat!("../assets/db-icons/", $name, ".svg")) as &[u8]
+    };
+}
+
+fn connection_color(key: &str) -> Hsla {
+    match key {
+        "mysql" => gpui_kit::rgb(0x0A5AF6),
+        "mariadb" => gpui_kit::rgb(0x1A6B8A),
+        "tidb" => gpui_kit::rgb(0xDC150B),
+        "oceanbase" => gpui_kit::rgb(0x1F6FEB),
+        "postgres" => gpui_kit::rgb(0x326690),
+        "redis" => gpui_kit::rgb(0xD82C20),
+        "sqlite" => gpui_kit::rgb(0x0F80CC),
+        "sqlserver" => gpui_kit::rgb(0xCC2927),
+        "oracle" => gpui_kit::rgb(0xC74634),
+        "mongodb" => gpui_kit::rgb(0x47A248),
+        "clickhouse" => gpui_kit::rgb(0xC7A500),
+        _ => gpui_kit::rgb(0x5B8DEF),
+    }
+    .into()
+}
+
+fn connection_icon(key: &str, active: bool) -> Icon {
+    let color = if active {
+        connection_color(key)
+    } else {
+        gpui_kit::rgb(0x8C8C91).into()
+    };
+    let bytes: &[u8] = match key {
+        "mysql" => db_icon!("mysql"),
+        "mariadb" => db_icon!("mariadb"),
+        "tidb" => db_icon!("tidb"),
+        "oceanbase" => db_icon!("oceanbase"),
+        "postgres" => db_icon!("postgres"),
+        "redis" => db_icon!("redis"),
+        "sqlite" => db_icon!("sqlite"),
+        "sqlserver" => db_icon!("sqlserver"),
+        "oracle" => db_icon!("oracle"),
+        "mongodb" => db_icon!("mongodb"),
+        "clickhouse" => db_icon!("clickhouse"),
+        _ => {
+            return Icon::new(AssetIcon::Database)
+                .with_size(px(16.))
+                .text_color(color);
+        }
+    };
+    Icon::default().data(bytes).with_size(px(16.)).text_color(color)
+}
+
 /// One sidebar tree row: indent, chevron/icon, name, hover.
 fn tree_row(
     id: String,
@@ -1131,26 +1181,33 @@ impl Omdbx {
     fn connection_row(&self, connection: &Connection, cx: &mut Context<Self>) -> impl IntoElement {
         let is_open =
             self.open_connections.contains(&connection.id) || !self.filter.trim().is_empty();
+        let active = is_open
+            || self
+                .active
+                .and_then(|index| self.tabs.get(index))
+                .is_some_and(|tab| tab.connection_id == connection.id);
+        let key = connection
+            .driver_profile
+            .clone()
+            .unwrap_or_else(|| connection.db_type.clone());
         let id = connection.id.clone();
         let colors = cx.theme().colors;
-        tree_row(
-            format!("conn-{}", connection.id),
-            12.0,
-            Icon::new(if is_open {
-                IconName::ChevronDown
-            } else {
-                IconName::ChevronRight
-            }),
-            connection.name.clone(),
-            colors,
-            cx.listener(move |this, _, _, cx| this.toggle_connection(&id, cx)),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(colors.muted_foreground)
-                .child(connection.db_type.clone()),
-        )
+        h_flex()
+            .id(SharedString::from(format!("conn-{}", connection.id)))
+            .h(px(32.))
+            .mx_2()
+            .pl(px(12.))
+            .pr_2()
+            .gap_2()
+            .items_center()
+            .rounded_md()
+            .cursor_pointer()
+            .text_size(px(13.))
+            .hover(|style| style.bg(colors.sidebar_accent))
+            .child(connection_icon(&key, active))
+            .child(div().min_w_0().truncate().child(connection.name.clone()))
+            .child(div().flex_1())
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_connection(&id, cx)))
     }
 
     /// Sidebar tree, narrowed to rows matching the search field. While a query
@@ -1272,7 +1329,7 @@ impl Omdbx {
                     .child(tree_row(
                         "menu-add-connection".to_string(),
                         12.,
-                        Icon::new(AssetIcon::Plug),
+                        Icon::new(AssetIcon::Cable),
                         "新增连接".to_string(),
                         colors,
                         cx.listener(|this, _, _, cx| this.show_notice("连接向导未完成", cx)),
@@ -1280,7 +1337,7 @@ impl Omdbx {
                     .child(tree_row(
                         "menu-new-query".to_string(),
                         12.,
-                        Icon::new(AssetIcon::SquareTerminal),
+                        Icon::new(AssetIcon::SquarePen),
                         "新增查询".to_string(),
                         colors,
                         cx.listener(|this, _, window, cx| this.open_query(window, cx)),
@@ -1289,7 +1346,7 @@ impl Omdbx {
                         tree_row(
                             "menu-tools".to_string(),
                             12.,
-                            Icon::new(AssetIcon::Wrench),
+                            Icon::new(AssetIcon::Toolbox),
                             "常用工具".to_string(),
                             colors,
                             cx.listener(|this, _, _, cx| {
@@ -1305,28 +1362,6 @@ impl Omdbx {
                             })
                             .with_size(px(16.))
                             .text_color(colors.muted_foreground),
-                        ),
-                    )
-                    .child(
-                        tree_row(
-                            "menu-comments".to_string(),
-                            12.,
-                            Icon::new(if self.show_comments {
-                                AssetIcon::Eye
-                            } else {
-                                AssetIcon::EyeOff
-                            }),
-                            "字段注释".to_string(),
-                            colors,
-                            cx.listener(|this, _, window, cx| {
-                                this.toggle_comments(window, cx)
-                            }),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(11.))
-                                .text_color(muted)
-                                .child(if self.show_comments { "开" } else { "关" }),
                         ),
                     )
                     .when(self.tools_open, |this| {
@@ -1370,40 +1405,45 @@ impl Omdbx {
                             colors,
                             cx.listener(|this, _, _, cx| this.show_notice("MCP 设置未完成", cx)),
                         ))
+                    })
+                    .when(self.search_open, |this| {
+                        this.child(
+                            h_flex()
+                                .mx_3()
+                                .my_1()
+                                .h(px(32.))
+                                .px_2()
+                                .rounded_md()
+                                .bg(gpui_kit::rgb(0xECECEE))
+                                .child(
+                                    Input::new(&self.search)
+                                        .appearance(false)
+                                        .bordered(false)
+                                        .text_size(px(13.))
+                                        .cleanable(true)
+                                        .prefix(
+                                            Icon::new(AssetIcon::Search)
+                                                .with_size(px(16.))
+                                                .text_color(muted),
+                                        ),
+                                ),
+                        )
+                    })
+                    .when(!self.search_open, |this| {
+                        this.child(tree_row(
+                            "menu-search".to_string(),
+                            12.,
+                            Icon::new(AssetIcon::Search),
+                            "搜索".to_string(),
+                            colors,
+                            cx.listener(|this, _, window, cx| {
+                                this.search_open = true;
+                                this.search
+                                    .update(cx, |state, cx| state.focus(window, cx));
+                                cx.notify();
+                            }),
+                        ))
                     }),
-            )
-            .child(
-                h_flex()
-                    .mx_3()
-                    .my_2()
-                    .gap_1()
-                    .items_center()
-                    .child(
-                        h_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .h(px(32.))
-                            .px_2()
-                            .rounded_md()
-                            .bg(gpui_kit::rgb(0xECECEE))
-                            .child(
-                                Input::new(&self.search)
-                                    .appearance(false)
-                                    .bordered(false)
-                                    .text_size(px(13.))
-                                    .cleanable(true)
-                                    .prefix(Icon::new(AssetIcon::Search).with_size(px(16.)).text_color(muted)),
-                            ),
-                    )
-                    .child(Self::icon_button(
-                        "reload-connections",
-                        Icon::new(AssetIcon::RefreshCw)
-                            .with_size(px(16.))
-                            .text_color(muted)
-                            .into_any_element(),
-                        colors,
-                        cx.listener(|this, _, _, cx| this.reload(cx)),
-                    )),
             )
             .child(
                 v_flex()
@@ -1525,26 +1565,6 @@ impl Omdbx {
         } else {
             px(48.)
         }
-    }
-
-    fn rebuild_grid(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.grid.is_some() {
-            let delegate = GridDelegate {
-                columns: self.columns.clone(),
-                rows: self.rows.clone(),
-                meta: self.column_meta.clone(),
-                show_comments: self.show_comments,
-            };
-            self.grid = Some(cx.new(|cx| {
-                TableState::new(delegate, window, cx).col_resizable(false)
-            }));
-        }
-        cx.notify();
-    }
-
-    fn toggle_comments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.show_comments = !self.show_comments;
-        self.rebuild_grid(window, cx);
     }
 
     fn query_crumb(
