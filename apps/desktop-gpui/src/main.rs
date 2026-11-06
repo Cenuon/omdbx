@@ -179,6 +179,7 @@ fn fetch_tables(connection_id: &str, database: &str, schema: &str) -> Result<Vec
 
 struct TableData {
     columns: Vec<String>,
+    column_types: Vec<String>,
     rows: Vec<Vec<String>>,
 }
 
@@ -219,6 +220,17 @@ fn run_sql(
                 .collect()
         })
         .unwrap_or_default();
+    let column_types = value
+        .get("column_types")
+        .and_then(|types| types.as_array())
+        .map(|types| {
+            types
+                .iter()
+                .filter_map(|name| name.as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
     let rows = value
         .get("rows")
         .and_then(|rows| rows.as_array())
@@ -240,7 +252,36 @@ fn run_sql(
             .unwrap_or("查询失败");
         return Err(message.to_string());
     }
-    Ok(TableData { columns, rows })
+    Ok(TableData { columns, column_types, rows })
+}
+
+fn sql_tables(sql: &str) -> Vec<String> {
+    let tokens: Vec<&str> = sql.split_whitespace().collect();
+    let mut tables: Vec<String> = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        let keyword = token
+            .trim_matches(|c: char| !c.is_alphanumeric() && c != '_')
+            .to_ascii_uppercase();
+        if keyword != "FROM" && keyword != "JOIN" {
+            continue;
+        }
+        let Some(next) = tokens.get(index + 1) else {
+            continue;
+        };
+        let next = next.trim_matches(|c: char| {
+            matches!(c, ',' | ';' | '(' | ')' | '\'' | '"' | '`' | '[' | ']')
+        });
+        let table = next
+            .rsplit('.')
+            .next()
+            .unwrap_or(next)
+            .trim_matches(|c| matches!(c, '`' | '"' | '[' | ']'))
+            .to_string();
+        if !table.is_empty() && !tables.contains(&table) {
+            tables.push(table);
+        }
+    }
+    tables
 }
 
 fn cell_text(value: &serde_json::Value) -> String {
@@ -838,10 +879,40 @@ impl Omdbx {
         let started = std::time::Instant::now();
         match run_sql(&connection, &database, &schema, &sql) {
             Ok(data) => {
+                let mut schema_columns: Vec<ColumnMeta> = Vec::new();
+                for table in sql_tables(&sql) {
+                    if let Ok(columns) =
+                        fetch_columns(&connection.id, &database, &schema, &table)
+                    {
+                        for column in columns {
+                            if !schema_columns.iter().any(|item| item.name == column.name) {
+                                schema_columns.push(column);
+                            }
+                        }
+                    }
+                }
+                let meta: Vec<ColumnMeta> = data
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| {
+                        let mut column = schema_columns
+                            .iter()
+                            .find(|item| &item.name == name)
+                            .cloned()
+                            .unwrap_or_default();
+                        column.name = name.clone();
+                        if column.data_type.is_empty() {
+                            column.data_type =
+                                data.column_types.get(index).cloned().unwrap_or_default();
+                        }
+                        column
+                    })
+                    .collect();
                 let delegate = GridDelegate {
                     columns: data.columns.clone(),
                     rows: data.rows.clone(),
-                    meta: Vec::new(),
+                    meta,
                 };
                 self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
                 self.columns = data.columns;
