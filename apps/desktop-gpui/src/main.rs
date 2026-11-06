@@ -493,6 +493,19 @@ fn tabular() -> FontFeatures {
 // ---------------------------------------------------------------- state
 
 #[derive(Clone)]
+struct QueryTab {
+    key: String,
+    title: String,
+    editor: Entity<EditorState>,
+}
+
+#[derive(Clone, Copy)]
+enum CloseTarget {
+    Table(usize),
+    Query(usize),
+}
+
+#[derive(Clone)]
 struct Tab {
     key: String,
     title: String,
@@ -515,7 +528,9 @@ struct Omdbx {
     rows: Vec<Vec<String>>,
     loading: bool,
     grid: Option<Entity<TableState<GridDelegate>>>,
-    query: Option<Entity<EditorState>>,
+    queries: Vec<QueryTab>,
+    active_query: Option<usize>,
+    next_query: u64,
     show_query: bool,
     search: Entity<InputState>,
     filter: String,
@@ -563,7 +578,9 @@ impl Omdbx {
             rows: Vec::new(),
             loading: false,
             grid: None,
-            query: None,
+            queries: Vec::new(),
+            active_query: None,
+            next_query: 0,
             show_query: false,
             search,
             filter: String::new(),
@@ -753,15 +770,21 @@ impl Omdbx {
     }
 
     fn open_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.query.is_none() {
-            self.query = Some(cx.new(|cx| {
-                EditorState::new(window, cx)
-                    .default_value(
-                        "SELECT id, name\nFROM customers\nWHERE id > 10\nORDER BY id\nLIMIT 50",
-                    )
-                    .language("sql")
-            }));
-        }
+        self.next_query += 1;
+        let number = self.next_query;
+        let editor = cx.new(|cx| {
+            EditorState::new(window, cx)
+                .default_value(
+                    "SELECT id, name\nFROM customers\nWHERE id > 10\nORDER BY id\nLIMIT 50",
+                )
+                .language("sql")
+        });
+        self.queries.push(QueryTab {
+            key: format!("query-{number}"),
+            title: format!("查询 {number}"),
+            editor,
+        });
+        self.active_query = Some(self.queries.len() - 1);
         self.show_query = true;
         cx.notify();
     }
@@ -792,8 +815,14 @@ impl Omdbx {
     }
 
     fn run_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(state) = self.query.clone() else { return };
-        let sql = state.read(cx).value().to_string();
+        let Some(query) = self
+            .active_query
+            .and_then(|index| self.queries.get(index))
+            .cloned()
+        else {
+            return;
+        };
+        let sql = query.editor.read(cx).value().to_string();
         if sql.trim().is_empty() {
             return;
         }
@@ -827,15 +856,34 @@ impl Omdbx {
         cx.notify();
     }
 
-    fn close_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.query = None;
-        self.show_query = false;
-        if self.active.is_some() {
-            self.load_active(window, cx);
+    fn close_query(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= self.queries.len() {
+            return;
+        }
+        let was_active = self.show_query && self.active_query == Some(index);
+        self.queries.remove(index);
+        self.active_query = match self.active_query {
+            Some(active) if index < active => Some(active - 1),
+            Some(active) if index == active => None,
+            other => other,
+        };
+        if self.queries.is_empty() {
+            self.active_query = None;
+            self.show_query = false;
+            if self.active.is_some() {
+                self.load_active(window, cx);
+            } else {
+                self.grid = None;
+                self.columns.clear();
+                self.rows.clear();
+                cx.notify();
+            }
+        } else if was_active {
+            let next = index.min(self.queries.len() - 1);
+            self.active_query = Some(next);
+            self.show_query = true;
+            cx.notify();
         } else {
-            self.grid = None;
-            self.columns.clear();
-            self.rows.clear();
             cx.notify();
         }
     }
@@ -1244,8 +1292,11 @@ impl Omdbx {
                     .flex_none()
                     .font_family(cx.theme().mono_font_family.clone())
                     .text_size(px(13.))
-                    .child(match self.query.as_ref() {
-                        Some(state) => Editor::new(state)
+                    .child(match self
+                        .active_query
+                        .and_then(|index| self.queries.get(index))
+                    {
+                        Some(query) => Editor::new(&query.editor)
                             .h(gpui_kit::relative(1.))
                             .into_any_element(),
                         None => div().into_any_element(),
@@ -1296,18 +1347,19 @@ impl Omdbx {
                             AssetIcon::Table2,
                             title,
                             is_active,
-                            Some(close_index),
+                            Some(CloseTarget::Table(close_index)),
                             colors,
                             cx,
                         )
                     }))
-                    .children(self.query.as_ref().map(|_| {
+                    .children(self.queries.iter().enumerate().map(|(index, query)| {
+                        let is_active = self.show_query && self.active_query == Some(index);
                         self.tab_chip(
-                            "tab-query".to_string(),
+                            format!("tab-{}", query.key),
                             AssetIcon::SquareTerminal,
-                            "查询".to_string(),
-                            self.show_query,
-                            Some(usize::MAX),
+                            query.title.clone(),
+                            is_active,
+                            Some(CloseTarget::Query(index)),
                             colors,
                             cx,
                         )
@@ -1449,7 +1501,7 @@ impl Omdbx {
         icon: AssetIcon,
         title: String,
         is_active: bool,
-        close: Option<usize>,
+        close: Option<CloseTarget>,
         colors: gpui_kit::component::ThemeColor,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1476,7 +1528,7 @@ impl Omdbx {
             .child(Icon::new(icon).with_size(px(16.)))
             .child(div().max_w(px(180.)).truncate().child(title));
         match close {
-            Some(index) => chip
+            Some(target) => chip
                 .child(
                     div()
                         .id(SharedString::from(format!("close-{id}")))
@@ -1495,17 +1547,23 @@ impl Omdbx {
                         .child(Icon::new(AssetIcon::X).with_size(px(14.)))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
-                            if index == usize::MAX {
-                                this.close_query(window, cx);
-                            } else {
-                                this.close_tab(index, window, cx);
+                            match target {
+                                CloseTarget::Table(index) => this.close_tab(index, window, cx),
+                                CloseTarget::Query(index) => this.close_query(index, window, cx),
                             }
                         })),
                 )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.show_query = false;
-                    this.active = Some(index);
-                    this.load_active(window, cx);
+                .on_click(cx.listener(move |this, _, window, cx| match target {
+                    CloseTarget::Table(index) => {
+                        this.show_query = false;
+                        this.active = Some(index);
+                        this.load_active(window, cx);
+                    }
+                    CloseTarget::Query(index) => {
+                        this.show_query = true;
+                        this.active_query = Some(index);
+                        cx.notify();
+                    }
                 }))
                 .into_any_element(),
             None => chip
@@ -1588,7 +1646,7 @@ impl Omdbx {
             .px(px(8.))
             .pb(px(8.))
             // no tab strip: keep the same 8px gap at the top as the sides
-            .when(self.tabs.is_empty() && self.query.is_none(), |this| {
+            .when(self.tabs.is_empty() && self.queries.is_empty(), |this| {
                 this.pt(px(8.))
             })
             .child(
@@ -1629,7 +1687,7 @@ impl Render for Omdbx {
                                 .min_w_0()
                                 // no tabs yet: no empty strip and no +, the card
                                 // starts at the top of the window
-                                .when(!self.tabs.is_empty() || self.query.is_some(), |this| {
+                                .when(!self.tabs.is_empty() || !self.queries.is_empty(), |this| {
                                     this.child(self.tab_bar(false, cx))
                                 })
                                 .child(self.content_card(cx))
