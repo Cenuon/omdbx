@@ -412,8 +412,6 @@ impl TableDelegate for GridDelegate {
                 .text_size(px(11.))
                 .text_color(muted)
                 .font_features(tabular())
-                // the fixed column paints above the row stripe
-                .when(row % 2 == 1, |this| this.bg(cx.theme().tokens.table_even))
                 .child(format!("{}", row + 1))
                 .into_any_element();
         }
