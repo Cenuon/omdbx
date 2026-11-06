@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::collapsible::Collapsible;
 use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
 use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableState};
 use gpui_kit::component::{
@@ -1364,48 +1365,65 @@ impl Omdbx {
                             .text_color(colors.muted_foreground),
                         ),
                     )
-                    .when(self.tools_open, |this| {
-                        this.child(tree_row(
-                            "tool-transfer".to_string(),
-                            40.,
-                            Icon::new(AssetIcon::ArrowLeftRight),
-                            "数据传输".to_string(),
-                            colors,
-                            cx.listener(|this, _, _, cx| this.show_notice("数据传输未完成", cx)),
-                        ))
-                        .child(tree_row(
-                            "tool-backup".to_string(),
-                            40.,
-                            Icon::new(AssetIcon::DatabaseBackup),
-                            "数据备份".to_string(),
-                            colors,
-                            cx.listener(|this, _, _, cx| this.show_notice("数据备份未完成", cx)),
-                        ))
-                        .child(tree_row(
-                            "tool-compare-schema".to_string(),
-                            40.,
-                            Icon::new(AssetIcon::GitCompare),
-                            "比较结构".to_string(),
-                            colors,
-                            cx.listener(|this, _, _, cx| this.show_notice("比较结构未完成", cx)),
-                        ))
-                        .child(tree_row(
-                            "tool-compare-data".to_string(),
-                            40.,
-                            Icon::new(AssetIcon::GitCompareArrows),
-                            "比较数据".to_string(),
-                            colors,
-                            cx.listener(|this, _, _, cx| this.show_notice("比较数据未完成", cx)),
-                        ))
-                        .child(tree_row(
-                            "tool-mcp".to_string(),
-                            40.,
-                            Icon::new(AssetIcon::Server),
-                            "MCP 设置".to_string(),
-                            colors,
-                            cx.listener(|this, _, _, cx| this.show_notice("MCP 设置未完成", cx)),
-                        ))
-                    })
+                    .child(
+                        Collapsible::new()
+                            .motion_id("tools-menu")
+                            .open(self.tools_open)
+                            .content(
+                                v_flex()
+                                    .gap(px(1.))
+                                    .child(tree_row(
+                                        "tool-transfer".to_string(),
+                                        12.,
+                                        Icon::new(AssetIcon::ArrowLeftRight),
+                                        "数据传输".to_string(),
+                                        colors,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.show_notice("数据传输未完成", cx)
+                                        }),
+                                    ))
+                                    .child(tree_row(
+                                        "tool-backup".to_string(),
+                                        12.,
+                                        Icon::new(AssetIcon::DatabaseBackup),
+                                        "数据备份".to_string(),
+                                        colors,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.show_notice("数据备份未完成", cx)
+                                        }),
+                                    ))
+                                    .child(tree_row(
+                                        "tool-compare-schema".to_string(),
+                                        12.,
+                                        Icon::new(AssetIcon::GitCompare),
+                                        "比较结构".to_string(),
+                                        colors,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.show_notice("比较结构未完成", cx)
+                                        }),
+                                    ))
+                                    .child(tree_row(
+                                        "tool-compare-data".to_string(),
+                                        12.,
+                                        Icon::new(AssetIcon::GitCompareArrows),
+                                        "比较数据".to_string(),
+                                        colors,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.show_notice("比较数据未完成", cx)
+                                        }),
+                                    ))
+                                    .child(tree_row(
+                                        "tool-mcp".to_string(),
+                                        12.,
+                                        Icon::new(AssetIcon::Server),
+                                        "MCP 设置".to_string(),
+                                        colors,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.show_notice("MCP 设置未完成", cx)
+                                        }),
+                                    )),
+                            ),
+                    )
                     .when(self.search_open, |this| {
                         this.child(
                             h_flex()
