@@ -313,6 +313,7 @@ struct GridDelegate {
     columns: Vec<String>,
     rows: Vec<Vec<String>>,
     meta: Vec<ColumnMeta>,
+    show_comments: bool,
 }
 
 impl TableDelegate for GridDelegate {
@@ -422,7 +423,7 @@ impl TableDelegate for GridDelegate {
                                 .child(data_type),
                         )
                     })
-                    .when(!comment.is_empty(), |this| {
+                    .when(self.show_comments && !comment.is_empty(), |this| {
                         this.child(
                             div()
                                 .truncate()
@@ -580,6 +581,8 @@ struct Omdbx {
     notice_id: u64,
     tools_open: bool,
     query_ms: Option<u128>,
+    column_meta: Vec<ColumnMeta>,
+    show_comments: bool,
 }
 
 impl Omdbx {
@@ -631,6 +634,8 @@ impl Omdbx {
             notice_id: 0,
             tools_open: false,
             query_ms: None,
+            column_meta: Vec::new(),
+            show_comments: true,
         }
     }
 
@@ -771,10 +776,12 @@ impl Omdbx {
                             .unwrap_or_default()
                     })
                     .collect();
+                self.column_meta = meta.clone();
                 let delegate = GridDelegate {
                     columns: data.columns.clone(),
                     rows: data.rows.clone(),
                     meta,
+                    show_comments: self.show_comments,
                 };
                 self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
                 self.columns = data.columns;
@@ -909,10 +916,12 @@ impl Omdbx {
                         column
                     })
                     .collect();
+                self.column_meta = meta.clone();
                 let delegate = GridDelegate {
                     columns: data.columns.clone(),
                     rows: data.rows.clone(),
                     meta,
+                    show_comments: self.show_comments,
                 };
                 self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
                 self.columns = data.columns;
@@ -1193,6 +1202,28 @@ impl Omdbx {
                             .text_color(colors.muted_foreground),
                         ),
                     )
+                    .child(
+                        tree_row(
+                            "menu-comments".to_string(),
+                            12.,
+                            Icon::new(if self.show_comments {
+                                AssetIcon::Eye
+                            } else {
+                                AssetIcon::EyeOff
+                            }),
+                            "字段注释".to_string(),
+                            colors,
+                            cx.listener(|this, _, window, cx| {
+                                this.toggle_comments(window, cx)
+                            }),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(muted)
+                                .child(if self.show_comments { "开" } else { "关" }),
+                        ),
+                    )
                     .when(self.tools_open, |this| {
                         this.child(tree_row(
                             "tool-transfer".to_string(),
@@ -1286,6 +1317,7 @@ impl Omdbx {
         grid: &Entity<TableState<GridDelegate>>,
         colors: gpui_kit::component::ThemeColor,
     ) -> impl IntoElement {
+        let header_height = self.header_height();
         div()
             .size_full()
             .rounded(px(10.))
@@ -1304,12 +1336,12 @@ impl Omdbx {
                             .top_0()
                             .left_0()
                             .right_0()
-                            .h(px(64.))
+                            .h(header_height)
                             .border_t_1()
                             .border_color(colors.border)
                             .bg(gpui_kit::rgb(0xF0F0F1)),
                     )
-                    .child(DataTable::new(grid).bordered(false).large().stripe(true).header_row_height(px(64.))),
+                    .child(DataTable::new(grid).bordered(false).large().stripe(true).header_row_height(header_height)),
             )
     }
 
@@ -1340,6 +1372,39 @@ impl Omdbx {
                     .text_color(colors.muted_foreground)
                     .child(hint),
             )
+    }
+
+    fn header_height(&self) -> gpui_kit::Pixels {
+        if self.show_comments
+            && self
+                .column_meta
+                .iter()
+                .any(|meta| !meta.comment.is_empty())
+        {
+            px(64.)
+        } else {
+            px(48.)
+        }
+    }
+
+    fn rebuild_grid(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.grid.is_some() {
+            let delegate = GridDelegate {
+                columns: self.columns.clone(),
+                rows: self.rows.clone(),
+                meta: self.column_meta.clone(),
+                show_comments: self.show_comments,
+            };
+            self.grid = Some(cx.new(|cx| {
+                TableState::new(delegate, window, cx).col_resizable(false)
+            }));
+        }
+        cx.notify();
+    }
+
+    fn toggle_comments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_comments = !self.show_comments;
+        self.rebuild_grid(window, cx);
     }
 
     fn query_crumb(
