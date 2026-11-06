@@ -97,6 +97,95 @@ fn fetch_connections() -> Result<Vec<Connection>, String> {
     serde_json::from_value(value).map_err(|error| error.to_string())
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UpdateLevel {
+    Patch,
+    Minor,
+    Major,
+}
+
+#[derive(Clone)]
+struct UpdateInfo {
+    version: String,
+    level: UpdateLevel,
+}
+
+impl UpdateLevel {
+    fn color(self) -> Hsla {
+        match self {
+            UpdateLevel::Patch => gpui_kit::rgb(0x3F7FD0).into(),
+            UpdateLevel::Minor => gpui_kit::rgb(0xE0A83C).into(),
+            UpdateLevel::Major => gpui_kit::rgb(0xE5534B).into(),
+        }
+    }
+}
+
+fn parse_version(text: &str) -> (u32, u32, u32) {
+    let Some(start) = text.find(|c: char| c.is_ascii_digit()) else {
+        return (0, 0, 0);
+    };
+    let digits: String = text[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let mut parts = digits.split('.').filter_map(|part| part.parse::<u32>().ok());
+    (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    )
+}
+
+fn compare_versions(current: &str, latest: &str) -> Option<UpdateLevel> {
+    let (current_major, current_minor, current_patch) = parse_version(current);
+    let (latest_major, latest_minor, latest_patch) = parse_version(latest);
+    if latest_major > current_major {
+        Some(UpdateLevel::Major)
+    } else if latest_major == current_major && latest_minor > current_minor {
+        Some(UpdateLevel::Minor)
+    } else if latest_major == current_major
+        && latest_minor == current_minor
+        && latest_patch > current_patch
+    {
+        Some(UpdateLevel::Patch)
+    } else {
+        None
+    }
+}
+
+fn fetch_update() -> Option<UpdateInfo> {
+    let mut builder = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(3))
+        .timeout_read(Duration::from_secs(5));
+    // Follow the same HTTPS proxy as git/push without picking up all_proxy,
+    // which may be a SOCKS endpoint this build does not support.
+    if let Some(proxy) = std::env::var("https_proxy")
+        .or_else(|_| std::env::var("HTTPS_PROXY"))
+        .ok()
+        .and_then(|value| ureq::Proxy::new(&value).ok())
+    {
+        builder = builder.proxy(proxy);
+    }
+    let agent = builder.build();
+    // The releases/latest redirect names the newest tag and is not subject to
+    // the unauthenticated API rate limit.
+    let response = agent
+        .get("https://github.com/Cenuon/omdbx/releases/latest")
+        .call()
+        .ok()?;
+    let final_url = response.get_url().to_string();
+    let tag = final_url.rsplit("/tag/").next()?;
+    if tag == final_url {
+        return None;
+    }
+    let latest = tag.trim_start_matches("desktop-v").trim_start_matches('v');
+    let level = compare_versions(env!("CARGO_PKG_VERSION"), latest)?;
+    Some(UpdateInfo {
+        version: latest.to_string(),
+        level,
+    })
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 struct ColumnMeta {
     #[serde(default)]
@@ -583,6 +672,7 @@ struct Omdbx {
     query_ms: Option<u128>,
     column_meta: Vec<ColumnMeta>,
     show_comments: bool,
+    update: Option<UpdateInfo>,
 }
 
 impl Omdbx {
@@ -610,7 +700,7 @@ impl Omdbx {
         } else if error.is_none() {
             // no connections saved yet
         }
-        Self {
+        let this = Self {
             connections,
             error,
             open_connections,
@@ -636,7 +726,10 @@ impl Omdbx {
             query_ms: None,
             column_meta: Vec::new(),
             show_comments: true,
-        }
+            update: None,
+        };
+        this.check_for_update(cx);
+        this
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
@@ -799,6 +892,18 @@ impl Omdbx {
         cx.notify();
     }
 
+
+    fn check_for_update(&self, cx: &mut Context<Self>) {
+        let task = cx.background_executor().spawn(async { fetch_update() });
+        cx.spawn(async move |weak, cx| {
+            let update = task.await;
+            let _ = weak.update(cx, |this, cx| {
+                this.update = update;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
 
     fn show_notice(&mut self, message: &str, cx: &mut Context<Self>) {
         self.notice = Some(message.to_string());
@@ -1308,6 +1413,45 @@ impl Omdbx {
                     .overflow_y_scroll()
                     .pb_2()
                     .children(self.tree(cx)),
+            )
+            .child(
+                h_flex()
+                    .h(px(44.))
+                    .flex_none()
+                    .px_3()
+                    .items_center()
+                    .justify_between()
+                    .child(Self::icon_button(
+                        "settings",
+                        Icon::new(AssetIcon::Settings)
+                            .with_size(px(16.))
+                            .text_color(colors.muted_foreground)
+                            .into_any_element(),
+                        colors,
+                        cx.listener(|this, _, _, cx| this.show_notice("设置未完成", cx)),
+                    ))
+                    .child({
+                        let update = self.update.clone();
+                        let color = update
+                            .as_ref()
+                            .map(|info| info.level.color())
+                            .unwrap_or(colors.muted_foreground);
+                        Self::icon_button(
+                            "update",
+                            Icon::new(AssetIcon::CircleArrowUp)
+                                .with_size(px(16.))
+                                .text_color(color)
+                                .into_any_element(),
+                            colors,
+                            cx.listener(move |this, _, _, cx| match &update {
+                                Some(info) => this.show_notice(
+                                    &format!("新版本 {} 可用", info.version),
+                                    cx,
+                                ),
+                                None => this.show_notice("已是最新版本", cx),
+                            }),
+                        )
+                    }),
             )
     }
 
