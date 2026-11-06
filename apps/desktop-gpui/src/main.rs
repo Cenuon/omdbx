@@ -993,7 +993,7 @@ impl Omdbx {
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let muted = colors.muted_foreground;
-        let tint = colors.sidebar.opacity(0.75);
+        let tint = colors.sidebar.opacity(0.55);
         v_flex()
             .w_full()
             .h_full()
@@ -1269,6 +1269,11 @@ impl Omdbx {
             .min_w_0()
             .items_center()
             .gap_1()
+            // same surface as the sidebar; in the collapsed state the
+            // titlebar already paints it, so avoid a double tint
+            .when(!leading_toggle, |this| {
+                this.bg(colors.sidebar.opacity(0.55))
+            })
             .when(leading_toggle, |this| {
                 this.pl(px(80.))
                     .child(self.sidebar_toggle(cx))
@@ -1622,7 +1627,7 @@ impl Render for Omdbx {
                         .relative()
                         .h(px(44.))
                         .flex_none()
-                        .child(TitleBar::new().h(px(44.)).bg(colors.sidebar.opacity(0.75)))
+                        .child(TitleBar::new().h(px(44.)).bg(colors.sidebar.opacity(0.55)))
                         .child(
                             div()
                                 .absolute()
