@@ -1034,7 +1034,7 @@ impl Omdbx {
                 .mx_3()
                 .mt_3()
                 .mb_2()
-                .h(px(40.))
+                .h(px(32.))
                 .px_2()
                 .rounded_lg()
                 .bg(colors.background)
