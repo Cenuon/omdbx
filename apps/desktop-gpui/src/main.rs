@@ -1008,7 +1008,7 @@ impl Omdbx {
                         h_flex()
                             .absolute()
                             .top_0()
-                            .right(px(8.))
+                            .left(px(80.))
                             .h(px(44.))
                             .items_center()
                             .child(self.sidebar_toggle(cx)),
@@ -1268,7 +1268,7 @@ impl Omdbx {
             .items_center()
             .gap_1()
             .when(leading_toggle, |this| {
-                this.pl(px(88.))
+                this.pl(px(80.))
                     .child(self.sidebar_toggle(cx))
                     .child(div().w(px(4.)))
             })
