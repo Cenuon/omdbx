@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -16,8 +17,8 @@ use gpui_kit::assets::IconName as AssetIcon;
 use gpui_kit::base::{h_resizable, resizable_panel, ResizeHandleRenderer};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    div, px, App, Context, Entity, FontWeight, Hsla, InteractiveElement, IntoElement,
-    ParentElement, Render, SharedString, Styled, Window, WindowOptions,
+    div, px, App, Context, Entity, FontFeatures, FontWeight, Hsla, InteractiveElement,
+    IntoElement, ParentElement, Render, SharedString, Styled, Window, WindowOptions,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -308,8 +309,9 @@ impl TableDelegate for GridDelegate {
             .map(|meta| {
                 let text = (meta.name.chars().count() as f32 * 8.)
                     .max(meta.data_type.chars().count() as f32 * 7.)
-                    .max(meta.comment.chars().count() as f32 * 11.);
-                (text + 28.).clamp(120., 260.)
+                    .max(meta.comment.chars().count() as f32 * 11.)
+                    .min(180.);
+                (((text + 28.) / 4.).round() * 4.).clamp(120., 200.)
             })
             .unwrap_or(140.);
         Column::new(name.clone(), name)
@@ -342,7 +344,6 @@ impl TableDelegate for GridDelegate {
             .get(col_ix - 1)
             .map(|meta| (meta.data_type.clone(), meta.comment.clone()))
             .unwrap_or_default();
-        let type_color = data_type_color(&data_type, muted);
         div()
             .h_full()
             .w_full()
@@ -367,16 +368,16 @@ impl TableDelegate for GridDelegate {
                     .child(
                         div()
                             .truncate()
-                            .text_size(px(12.5))
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::MEDIUM)
                             .child(name),
                     )
                     .when(!data_type.is_empty(), |this| {
                         this.child(
                             div()
                                 .truncate()
-                                .text_size(px(10.))
-                                .text_color(type_color)
+                                .text_size(px(11.))
+                                .text_color(gpui_kit::rgb(0x3A68A5))
                                 .child(data_type),
                         )
                     })
@@ -384,8 +385,8 @@ impl TableDelegate for GridDelegate {
                         this.child(
                             div()
                                 .truncate()
-                                .text_size(px(10.))
-                                .text_color(gpui_kit::rgb(0x9A9AA0))
+                                .text_size(px(11.))
+                                .text_color(gpui_kit::rgb(0x66666C))
                                 .child(comment),
                         )
                     }),
@@ -410,6 +411,7 @@ impl TableDelegate for GridDelegate {
                 .justify_end()
                 .text_size(px(11.))
                 .text_color(muted)
+                .font_features(tabular())
                 // the fixed column paints above the row stripe
                 .when(row % 2 == 1, |this| this.bg(cx.theme().tokens.table_even))
                 .child(format!("{}", row + 1))
@@ -422,6 +424,11 @@ impl TableDelegate for GridDelegate {
             .cloned()
             .unwrap_or_default();
         let is_null = text == "NULL";
+        let numeric = self
+            .meta
+            .get(col - 1)
+            .map(|meta| is_numeric_type(&meta.data_type))
+            .unwrap_or(false);
         div()
             .h_full()
             .w_full()
@@ -444,6 +451,7 @@ impl TableDelegate for GridDelegate {
                     .flex_1()
                     .truncate()
                     .text_size(px(13.))
+                    .when(numeric, |this| this.text_right().font_features(tabular()))
                     .when(is_null, |this| this.text_color(muted))
                     .child(text),
             )
@@ -451,26 +459,15 @@ impl TableDelegate for GridDelegate {
     }
 }
 
-fn data_type_color(data_type: &str, muted: Hsla) -> Hsla {
+fn is_numeric_type(data_type: &str) -> bool {
     let ty = data_type.to_ascii_lowercase();
-    if ["int", "decimal", "numeric", "float", "double", "real", "bit"]
+    ["int", "decimal", "numeric", "float", "double", "real", "bit"]
         .iter()
         .any(|needle| ty.contains(needle))
-    {
-        gpui_kit::rgb(0x6B9BD8).into()
-    } else if ["char", "text", "enum", "set", "json", "blob", "binary"]
-        .iter()
-        .any(|needle| ty.contains(needle))
-    {
-        gpui_kit::rgb(0x63B3A6).into()
-    } else if ["date", "time", "year"]
-        .iter()
-        .any(|needle| ty.contains(needle))
-    {
-        gpui_kit::rgb(0xC9A15E).into()
-    } else {
-        muted
-    }
+}
+
+fn tabular() -> FontFeatures {
+    FontFeatures(Arc::new(vec![("tnum".into(), 1)]))
 }
 
 // ---------------------------------------------------------------- state
@@ -817,7 +814,7 @@ fn tree_row(
     let primary = indent <= 14.;
     h_flex()
         .id(SharedString::from(id))
-        .h(px(if primary { 32. } else { 26. }))
+        .h(px(if primary { 32. } else { 28. }))
         .mx_2()
         .pl(px(indent))
         .pr_2()
@@ -827,7 +824,7 @@ fn tree_row(
         .cursor_pointer()
         .text_size(px(if primary { 13. } else { 12. }))
         .hover(|style| style.bg(colors.sidebar_accent))
-        .child(icon.xsmall().text_color(colors.muted_foreground))
+        .child(icon.small().text_color(colors.muted_foreground))
         .child(div().min_w_0().truncate().child(name))
         .child(div().flex_1())
         .on_click(on_click)
@@ -923,7 +920,7 @@ impl Omdbx {
                     children.push(
                         tree_row(
                             format!("t-{}|{}|{}", connection.id, database, table),
-                            46.0,
+                            44.0,
                             Icon::new(AssetIcon::Table2),
                             table.clone(),
                             colors,
@@ -976,18 +973,34 @@ impl Omdbx {
                 h_flex()
                     .mx_3()
                     .my_2()
-                    .h(px(32.))
-                    .px_2()
-                    .rounded_md()
-                    .bg(colors.secondary)
+                    .gap_1()
+                    .items_center()
                     .child(
-                        Input::new(&self.search)
-                            .appearance(false)
-                            .bordered(false)
+                        h_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .h(px(32.))
+                            .px_2()
+                            .rounded_md()
+                            .bg(gpui_kit::rgb(0xECECEE))
+                            .child(
+                                Input::new(&self.search)
+                                    .appearance(false)
+                                    .bordered(false)
+                                    .small()
+                                    .cleanable(true)
+                                    .prefix(Icon::new(AssetIcon::Search).small().text_color(muted)),
+                            ),
+                    )
+                    .child(Self::icon_button(
+                        "reload-connections",
+                        Icon::new(AssetIcon::RefreshCw)
                             .small()
-                            .cleanable(true)
-                            .prefix(Icon::new(AssetIcon::Search).xsmall().text_color(muted)),
-                    ),
+                            .text_color(muted)
+                            .into_any_element(),
+                        colors,
+                        cx.listener(|this, _, _, cx| this.reload(cx)),
+                    )),
             )
             .child(
                 v_flex()
@@ -1013,7 +1026,7 @@ impl Omdbx {
                 div()
                     .relative()
                     .size_full()
-                    .rounded(px(6.))
+                    .rounded(px(10.))
                     .bg(colors.background)
                     .overflow_hidden()
                     // the table head is transparent, so this rounded band is
@@ -1033,9 +1046,22 @@ impl Omdbx {
             )
     }
 
+    fn keycap(label: &'static str, colors: gpui_kit::component::ThemeColor) -> impl IntoElement {
+        div()
+            .h(px(18.))
+            .px(px(5.))
+            .rounded(px(4.))
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors.background)
+            .text_size(px(11.))
+            .text_color(colors.muted_foreground)
+            .child(label)
+    }
+
     fn empty_state(
         title: &'static str,
-        hint: String,
+        hint: impl IntoElement,
         colors: gpui_kit::component::ThemeColor,
     ) -> impl IntoElement {
         v_flex()
@@ -1062,7 +1088,7 @@ impl Omdbx {
             )
     }
 
-    fn query_pane(&self, tab: &Option<Tab>, cx: &mut Context<Self>) -> impl IntoElement {
+    fn query_pane(&self, _tab: &Option<Tab>, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         v_flex()
             .flex_1()
@@ -1088,11 +1114,13 @@ impl Omdbx {
                     .child(self.table_frame(&grid, colors))
                     .into_any_element(),
                 None => Self::empty_state(
-                    "写一条 SQL 然后运行",
-                    match tab {
-                        Some(tab) => format!("⌘↵ 运行，当前表 {}", tab.title),
-                        None => "⌘↵ 运行".to_string(),
-                    },
+                    "写 SQL，点运行",
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(Self::keycap("⌘", colors))
+                        .child(Self::keycap("↵", colors))
+                        .child("运行"),
                     colors,
                 )
                 .into_any_element(),
@@ -1143,21 +1171,13 @@ impl Omdbx {
                     .child(Self::icon_button(
                         "new-query",
                         Icon::new(AssetIcon::Plus)
-                            .with_size(px(18.))
+                            .with_size(px(16.))
                             .text_color(colors.muted_foreground)
                             .into_any_element(),
                         colors,
                         cx.listener(|this, _, window, cx| this.open_query(window, cx)),
                     ))
                     .child(div().flex_1())
-                    .child(
-                        Button::new("refresh")
-                            .ghost()
-                            .xsmall()
-                            .icon(Icon::new(AssetIcon::RefreshCw).xsmall())
-                            .tooltip("刷新连接")
-                            .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
-                    )
     }
 
     fn main_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1167,29 +1187,25 @@ impl Omdbx {
 
         let title = if self.show_query {
             "查询".to_string()
+        } else if let Some(tab) = &tab {
+            format!(
+                "{} · {}",
+                self.connections
+                    .iter()
+                    .find(|item| item.id == tab.connection_id)
+                    .map(|item| item.name.clone())
+                    .unwrap_or_default(),
+                tab.database
+            )
         } else {
-            tab.as_ref()
-                .map(|tab| tab.title.clone())
-                .unwrap_or_else(|| "选择一张表".to_string())
+            "选择一张表".to_string()
         };
         let meta = if self.show_query {
             self.query_target()
                 .map(|(connection, database, _)| format!("{} · {}", connection.name, database))
                 .unwrap_or_default()
         } else {
-            tab.as_ref()
-                .map(|tab| {
-                    format!(
-                        "{} · {}",
-                        self.connections
-                            .iter()
-                            .find(|item| item.id == tab.connection_id)
-                            .map(|item| item.name.clone())
-                            .unwrap_or_default(),
-                        tab.database
-                    )
-                })
-                .unwrap_or_default()
+            String::new()
         };
         let status = if self.loading {
             "加载中…".to_string()
@@ -1213,8 +1229,8 @@ impl Omdbx {
                     .items_center()
                     .child(
                         div()
-                            .text_size(px(14.))
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(15.))
+                            .font_weight(FontWeight::MEDIUM)
                             .child(title),
                     )
                     .child(div().text_size(px(12.)).text_color(muted).child(meta))
@@ -1242,20 +1258,22 @@ impl Omdbx {
                         "选择一张表",
                         match &self.error {
                             Some(message) => format!("读取失败：{message}"),
-                            None => "在左侧展开连接和数据库，点表名打开".to_string(),
+                            None => "展开左侧连接和库，点表名打开".to_string(),
                         },
                         colors,
                     )
                     .into_any_element(),
                     Some(_) if self.columns.is_empty() && self.rows.is_empty() => {
-                        Self::empty_state(
-                            "没有数据",
-                            match &self.error {
-                                Some(message) => format!("查询失败：{message}"),
-                                None => "这张表是空的".to_string(),
-                            },
-                            colors,
-                        )
+                        match &self.error {
+                            Some(message) => {
+                                Self::empty_state("查询失败", message.clone(), colors)
+                            }
+                            None => Self::empty_state(
+                                "这张表是空的",
+                                "再选一张表看看".to_string(),
+                                colors,
+                            ),
+                        }
                         .into_any_element()
                     }
                     Some(_) => match self.grid.clone() {
@@ -1264,14 +1282,16 @@ impl Omdbx {
                             .min_h_0()
                             .child(self.table_frame(&grid, colors))
                             .into_any_element(),
-                        None => Self::empty_state(
-                            "没有数据",
-                            match &self.error {
-                                Some(message) => format!("查询失败：{message}"),
-                                None => "这张表是空的".to_string(),
-                            },
-                            colors,
-                        )
+                        None => match &self.error {
+                            Some(message) => {
+                                Self::empty_state("查询失败", message.clone(), colors)
+                            }
+                            None => Self::empty_state(
+                                "这张表是空的",
+                                "再选一张表看看".to_string(),
+                                colors,
+                            ),
+                        }
                         .into_any_element(),
                     },
                 }
@@ -1292,7 +1312,7 @@ impl Omdbx {
         let muted = colors.muted_foreground;
         let chip = h_flex()
             .id(SharedString::from(id.clone()))
-            .h(px(30.))
+            .h(px(32.))
             .px_2()
             .gap_1()
             .items_center()
@@ -1300,13 +1320,16 @@ impl Omdbx {
             .cursor_pointer()
             .text_size(px(13.))
             .when(is_active, |this| {
-                this.bg(colors.secondary).text_color(colors.foreground)
+                this.bg(colors.secondary)
+                    .text_color(colors.foreground)
+                    .border_1()
+                    .border_color(colors.border)
             })
             .when(!is_active, |this| {
                 this.text_color(muted)
                     .hover(|style| style.bg(colors.secondary))
             })
-            .child(Icon::new(icon).xsmall())
+            .child(Icon::new(icon).small())
             .child(div().max_w(px(180.)).truncate().child(title));
         match close {
             Some(index) => chip
@@ -1319,14 +1342,13 @@ impl Omdbx {
                         .items_center()
                         .justify_center()
                         .rounded(px(4.))
-                        .text_size(px(12.))
                         .text_color(muted)
                         .hover(|style| {
                             style
                                 .bg(colors.secondary_active)
                                 .text_color(colors.foreground)
                         })
-                        .child("×")
+                        .child(Icon::new(AssetIcon::X).with_size(px(12.)))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
                             this.close_tab(index, window, cx);
