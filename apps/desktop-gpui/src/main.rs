@@ -867,9 +867,9 @@ fn tree_row(
         .items_center()
         .rounded_md()
         .cursor_pointer()
-        .text_size(px(if primary { 13. } else { 12. }))
+        .text_size(px(13.))
         .hover(|style| style.bg(colors.sidebar_accent))
-        .child(icon.small().text_color(colors.muted_foreground))
+        .child(icon.with_size(px(16.)).text_color(colors.muted_foreground))
         .child(div().min_w_0().truncate().child(name))
         .child(div().flex_1())
         .on_click(on_click)
@@ -1053,7 +1053,7 @@ impl Omdbx {
                             } else {
                                 IconName::ChevronRight
                             })
-                            .xsmall()
+                            .with_size(px(16.))
                             .text_color(colors.muted_foreground),
                         ),
                     )
@@ -1118,15 +1118,15 @@ impl Omdbx {
                                 Input::new(&self.search)
                                     .appearance(false)
                                     .bordered(false)
-                                    .small()
+                                    .text_size(px(13.))
                                     .cleanable(true)
-                                    .prefix(Icon::new(AssetIcon::Search).small().text_color(muted)),
+                                    .prefix(Icon::new(AssetIcon::Search).with_size(px(16.)).text_color(muted)),
                             ),
                     )
                     .child(Self::icon_button(
                         "reload-connections",
                         Icon::new(AssetIcon::RefreshCw)
-                            .small()
+                            .with_size(px(16.))
                             .text_color(muted)
                             .into_any_element(),
                         colors,
@@ -1371,7 +1371,7 @@ impl Omdbx {
                             Button::new("run-query")
                                 .primary()
                                 .small()
-                                .icon(Icon::new(AssetIcon::Play).xsmall())
+                                .icon(Icon::new(AssetIcon::Play).with_size(px(16.)))
                                 .label("运行")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.run_query(window, cx)
@@ -1460,7 +1460,7 @@ impl Omdbx {
                 this.text_color(muted)
                     .hover(|style| style.bg(colors.secondary))
             })
-            .child(Icon::new(icon).small())
+            .child(Icon::new(icon).with_size(px(16.)))
             .child(div().max_w(px(180.)).truncate().child(title));
         match close {
             Some(index) => chip
@@ -1479,7 +1479,7 @@ impl Omdbx {
                                 .bg(colors.secondary_active)
                                 .text_color(colors.foreground)
                         })
-                        .child(Icon::new(AssetIcon::X).with_size(px(12.)))
+                        .child(Icon::new(AssetIcon::X).with_size(px(14.)))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
                             this.close_tab(index, window, cx);
