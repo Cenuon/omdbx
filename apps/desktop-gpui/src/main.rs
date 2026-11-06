@@ -1390,12 +1390,12 @@ impl Omdbx {
                     .h(gpui_kit::relative(0.52))
                     .flex_none()
                     .min_h_0()
-                    .px_3()
-                    .py_2()
                     .font_family(cx.theme().mono_font_family.clone())
                     .text_size(px(13.))
                     .child(match editor {
                         Some(state) => Editor::new(&state)
+                            .appearance(false)
+                            .bordered(false)
                             .h(gpui_kit::relative(1.))
                             .into_any_element(),
                         None => div().into_any_element(),
