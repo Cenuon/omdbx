@@ -309,9 +309,8 @@ impl TableDelegate for GridDelegate {
             .map(|meta| {
                 let text = (meta.name.chars().count() as f32 * 8.)
                     .max(meta.data_type.chars().count() as f32 * 7.)
-                    .max(meta.comment.chars().count() as f32 * 11.)
-                    .min(180.);
-                (((text + 28.) / 4.).round() * 4.).clamp(120., 200.)
+                    .max(meta.comment.chars().count() as f32 * 11.);
+                (text + 28.).clamp(120., 260.)
             })
             .unwrap_or(140.);
         Column::new(name.clone(), name)
@@ -344,6 +343,7 @@ impl TableDelegate for GridDelegate {
             .get(col_ix - 1)
             .map(|meta| (meta.data_type.clone(), meta.comment.clone()))
             .unwrap_or_default();
+        let type_color = data_type_color(&data_type, muted);
         div()
             .h_full()
             .w_full()
@@ -368,16 +368,16 @@ impl TableDelegate for GridDelegate {
                     .child(
                         div()
                             .truncate()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::MEDIUM)
+                            .text_size(px(12.5))
+                            .font_weight(FontWeight::SEMIBOLD)
                             .child(name),
                     )
                     .when(!data_type.is_empty(), |this| {
                         this.child(
                             div()
                                 .truncate()
-                                .text_size(px(11.))
-                                .text_color(gpui_kit::rgb(0x3A68A5))
+                                .text_size(px(10.))
+                                .text_color(type_color)
                                 .child(data_type),
                         )
                     })
@@ -385,8 +385,8 @@ impl TableDelegate for GridDelegate {
                         this.child(
                             div()
                                 .truncate()
-                                .text_size(px(11.))
-                                .text_color(gpui_kit::rgb(0x66666C))
+                                .text_size(px(10.))
+                                .text_color(gpui_kit::rgb(0x9A9AA0))
                                 .child(comment),
                         )
                     }),
@@ -456,6 +456,28 @@ impl TableDelegate for GridDelegate {
                     .child(text),
             )
             .into_any_element()
+    }
+}
+
+fn data_type_color(data_type: &str, muted: Hsla) -> Hsla {
+    let ty = data_type.to_ascii_lowercase();
+    if ["int", "decimal", "numeric", "float", "double", "real", "bit"]
+        .iter()
+        .any(|needle| ty.contains(needle))
+    {
+        gpui_kit::rgb(0x6B9BD8).into()
+    } else if ["char", "text", "enum", "set", "json", "blob", "binary"]
+        .iter()
+        .any(|needle| ty.contains(needle))
+    {
+        gpui_kit::rgb(0x63B3A6).into()
+    } else if ["date", "time", "year"]
+        .iter()
+        .any(|needle| ty.contains(needle))
+    {
+        gpui_kit::rgb(0xC9A15E).into()
+    } else {
+        muted
     }
 }
 
