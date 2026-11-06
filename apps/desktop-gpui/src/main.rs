@@ -870,7 +870,7 @@ fn tree_row(
         .cursor_pointer()
         .text_size(px(13.))
         .hover(|style| style.bg(colors.sidebar_accent))
-        .child(icon.with_size(px(16.)).text_color(colors.muted_foreground))
+        .child(icon.with_size(px(16.)).text_color(gpui_kit::rgb(0x56565C)))
         .child(div().min_w_0().truncate().child(name))
         .child(div().flex_1())
         .on_click(on_click)
@@ -899,7 +899,7 @@ impl Omdbx {
         .child(
             div()
                 .text_xs()
-                .text_color(colors.muted_foreground)
+                .text_color(gpui_kit::rgb(0x56565C))
                 .child(connection.db_type.clone()),
         )
     }
@@ -993,7 +993,7 @@ impl Omdbx {
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let muted = colors.muted_foreground;
-        let tint = colors.sidebar.opacity(0.55);
+        let tint = colors.sidebar.opacity(0.72);
         v_flex()
             .w_full()
             .h_full()
@@ -1272,7 +1272,7 @@ impl Omdbx {
             // same surface as the sidebar; in the collapsed state the
             // titlebar already paints it, so avoid a double tint
             .when(!leading_toggle, |this| {
-                this.bg(colors.sidebar.opacity(0.55))
+                this.bg(colors.sidebar.opacity(0.72))
             })
             .when(leading_toggle, |this| {
                 this.pl(px(80.))
@@ -1695,7 +1695,7 @@ fn main() {
                     cx,
                 ))),
                 window_min_size: Some(gpui_kit::size(px(900.), px(560.))),
-                window_background: WindowBackgroundAppearance::Blurred,
+                window_background: WindowBackgroundAppearance::Transparent,
                 // transparent titlebar owned by the app, so the sidebar can run
                 // to the top edge under the traffic lights
                 ..TitleBar::window_options()
