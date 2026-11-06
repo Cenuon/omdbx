@@ -20,8 +20,8 @@ use gpui_kit::base::{h_resizable, resizable_panel, ResizeHandleRenderer};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     div, px, App, Context, Entity, FocusHandle, FontFeatures, FontWeight, Hsla,
-    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Window,
-    WindowOptions,
+    InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle, SharedString, Styled,
+    Window, WindowOptions,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -682,6 +682,7 @@ struct Omdbx {
     update: Option<UpdateInfo>,
     search_open: bool,
     focus_handle: FocusHandle,
+    tree_scroll: ScrollHandle,
 }
 
 impl Omdbx {
@@ -746,6 +747,7 @@ impl Omdbx {
             update: None,
             search_open: false,
             focus_handle: cx.focus_handle(),
+            tree_scroll: ScrollHandle::new(),
         };
         this.check_for_update(cx);
         this
@@ -807,6 +809,103 @@ impl Omdbx {
         }
         self.open_databases.insert(key);
         cx.notify();
+    }
+
+    /// Reveal the active table in the tree: expand its connection and database,
+    /// load anything missing, then scroll the row into view. No active table
+    /// means no-op.
+    fn locate_active_table(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.show_query {
+            return;
+        }
+        let Some(tab) = self.active.and_then(|index| self.tabs.get(index)).cloned() else {
+            return;
+        };
+
+        // Locating reveals the full tree, so drop an active filter first.
+        if self.search_open || !self.filter.is_empty() {
+            self.search
+                .update(cx, |state, cx| state.set_value("", window, cx));
+            self.filter.clear();
+            self.search_open = false;
+        }
+
+        if !self.databases.contains_key(&tab.connection_id) {
+            match fetch_databases(&tab.connection_id) {
+                Ok(list) => {
+                    self.databases.insert(tab.connection_id.clone(), list);
+                }
+                Err(_) => return,
+            }
+        }
+        self.open_connections.insert(tab.connection_id.clone());
+
+        let key = format!("{}|{}", tab.connection_id, tab.database);
+        if !self.tables.contains_key(&key) {
+            let Some(connection) = self
+                .connections
+                .iter()
+                .find(|item| item.id == tab.connection_id)
+            else {
+                return;
+            };
+            let schema = connection
+                .default_schema
+                .clone()
+                .or_else(|| {
+                    fetch_schemas(&tab.connection_id, &tab.database)
+                        .ok()
+                        .and_then(|list| list.into_iter().next())
+                })
+                .unwrap_or_else(|| tab.database.clone());
+            match fetch_tables(&tab.connection_id, &tab.database, &schema) {
+                Ok(list) => {
+                    self.tables.insert(key.clone(), list);
+                }
+                Err(_) => return,
+            }
+        }
+        self.open_databases.insert(key);
+
+        if let Some(index) = self.tree_index_of_table(&tab) {
+            self.tree_scroll.scroll_to_item(index);
+        }
+        cx.notify();
+    }
+
+    /// Flat index of a table row among the tree's direct children, mirroring the
+    /// row order built in `tree`.
+    fn tree_index_of_table(&self, tab: &Tab) -> Option<usize> {
+        let mut index = 0;
+        for connection in &self.connections {
+            index += 1; // connection row
+            if !self.open_connections.contains(&connection.id) {
+                continue;
+            }
+            let Some(databases) = self.databases.get(&connection.id) else {
+                continue;
+            };
+            for database in databases {
+                let key = format!("{}|{}", connection.id, database);
+                let open = self.open_databases.contains(&key);
+                if connection.id == tab.connection_id && database == &tab.database {
+                    if !open {
+                        return None;
+                    }
+                    return self
+                        .tables
+                        .get(&key)?
+                        .iter()
+                        .position(|name| name == &tab.table)
+                        .map(|position| index + 1 + position);
+                }
+                index += 1; // database row
+                if open {
+                    index += self.tables.get(&key).map_or(0, Vec::len);
+                }
+            }
+        }
+        None
     }
 
     fn open_table(
@@ -960,7 +1059,7 @@ impl Omdbx {
         let focus_handle = self.focus_handle.clone();
         let settings = Button::new("connections-settings")
             .ghost()
-            .with_size(gpui_kit::component::Size::Size(px(28.)))
+            .with_size(gpui_kit::component::Size::Small)
             .icon(
                 Icon::new(AssetIcon::SlidersHorizontal)
                     .with_size(px(16.))
@@ -1043,13 +1142,13 @@ impl Omdbx {
             ))
             .child(settings)
             .child(Self::icon_button(
-                "connections-add",
-                Icon::new(AssetIcon::Plus)
+                "connections-locate",
+                Icon::new(AssetIcon::LocateFixed)
                     .with_size(px(16.))
                     .text_color(muted)
                     .into_any_element(),
                 colors,
-                cx.listener(|this, _, _, cx| this.show_notice("连接向导未完成", cx)),
+                cx.listener(|this, _, window, cx| this.locate_active_table(window, cx)),
             ))
             .into_any_element()
     }
@@ -1520,58 +1619,79 @@ impl Omdbx {
                             .content(
                                 v_flex()
                                     .w_full()
-                                    .bg(gpui_kit::rgb(0xF2F2F4))
-                                    .gap(px(1.))
-                                    .child(tree_row(
-                                        "tool-transfer".to_string(),
-                                        12.,
-                                        Icon::new(AssetIcon::ArrowLeftRight),
-                                        "数据传输".to_string(),
-                                        colors,
-                                        cx.listener(|this, _, _, cx| {
-                                            this.show_notice("数据传输未完成", cx)
-                                        }),
-                                    ))
-                                    .child(tree_row(
-                                        "tool-backup".to_string(),
-                                        12.,
-                                        Icon::new(AssetIcon::DatabaseBackup),
-                                        "数据备份".to_string(),
-                                        colors,
-                                        cx.listener(|this, _, _, cx| {
-                                            this.show_notice("数据备份未完成", cx)
-                                        }),
-                                    ))
-                                    .child(tree_row(
-                                        "tool-compare-schema".to_string(),
-                                        12.,
-                                        Icon::new(AssetIcon::GitCompare),
-                                        "比较结构".to_string(),
-                                        colors,
-                                        cx.listener(|this, _, _, cx| {
-                                            this.show_notice("比较结构未完成", cx)
-                                        }),
-                                    ))
-                                    .child(tree_row(
-                                        "tool-compare-data".to_string(),
-                                        12.,
-                                        Icon::new(AssetIcon::GitCompareArrows),
-                                        "比较数据".to_string(),
-                                        colors,
-                                        cx.listener(|this, _, _, cx| {
-                                            this.show_notice("比较数据未完成", cx)
-                                        }),
-                                    ))
-                                    .child(tree_row(
-                                        "tool-mcp".to_string(),
-                                        12.,
-                                        Icon::new(AssetIcon::Server),
-                                        "MCP 设置".to_string(),
-                                        colors,
-                                        cx.listener(|this, _, _, cx| {
-                                            this.show_notice("MCP 设置未完成", cx)
-                                        }),
-                                    )),
+                                    .px_2()
+                                    .child(
+                                        v_flex()
+                                            .w_full()
+                                            .rounded_md()
+                                            .bg(gpui_kit::rgb(0xF2F2F4))
+                                            .gap(px(1.))
+                                            .child(
+                                                tree_row(
+                                                    "tool-transfer".to_string(),
+                                                    12.,
+                                                    Icon::new(AssetIcon::ArrowLeftRight),
+                                                    "数据传输".to_string(),
+                                                    colors,
+                                                    cx.listener(|this, _, _, cx| {
+                                                        this.show_notice("数据传输未完成", cx)
+                                                    }),
+                                                )
+                                                .mx(px(0.)),
+                                            )
+                                            .child(
+                                                tree_row(
+                                                    "tool-backup".to_string(),
+                                                    12.,
+                                                    Icon::new(AssetIcon::DatabaseBackup),
+                                                    "数据备份".to_string(),
+                                                    colors,
+                                                    cx.listener(|this, _, _, cx| {
+                                                        this.show_notice("数据备份未完成", cx)
+                                                    }),
+                                                )
+                                                .mx(px(0.)),
+                                            )
+                                            .child(
+                                                tree_row(
+                                                    "tool-compare-schema".to_string(),
+                                                    12.,
+                                                    Icon::new(AssetIcon::GitCompare),
+                                                    "比较结构".to_string(),
+                                                    colors,
+                                                    cx.listener(|this, _, _, cx| {
+                                                        this.show_notice("比较结构未完成", cx)
+                                                    }),
+                                                )
+                                                .mx(px(0.)),
+                                            )
+                                            .child(
+                                                tree_row(
+                                                    "tool-compare-data".to_string(),
+                                                    12.,
+                                                    Icon::new(AssetIcon::GitCompareArrows),
+                                                    "比较数据".to_string(),
+                                                    colors,
+                                                    cx.listener(|this, _, _, cx| {
+                                                        this.show_notice("比较数据未完成", cx)
+                                                    }),
+                                                )
+                                                .mx(px(0.)),
+                                            )
+                                            .child(
+                                                tree_row(
+                                                    "tool-mcp".to_string(),
+                                                    12.,
+                                                    Icon::new(AssetIcon::Server),
+                                                    "MCP 设置".to_string(),
+                                                    colors,
+                                                    cx.listener(|this, _, _, cx| {
+                                                        this.show_notice("MCP 设置未完成", cx)
+                                                    }),
+                                                )
+                                                .mx(px(0.)),
+                                            ),
+                                    ),
                             ),
                     )
                     .child(self.connections_header(cx)),
@@ -1582,6 +1702,7 @@ impl Omdbx {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .track_scroll(&self.tree_scroll)
                     .pb_2()
                     .children(self.tree(cx)),
             )
