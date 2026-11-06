@@ -538,6 +538,7 @@ struct Omdbx {
     notice: Option<String>,
     notice_id: u64,
     tools_open: bool,
+    query_ms: Option<u128>,
 }
 
 impl Omdbx {
@@ -588,6 +589,7 @@ impl Omdbx {
             notice: None,
             notice_id: 0,
             tools_open: false,
+            query_ms: None,
         }
     }
 
@@ -833,6 +835,7 @@ impl Omdbx {
         };
         self.loading = true;
         cx.notify();
+        let started = std::time::Instant::now();
         match run_sql(&connection, &database, &schema, &sql) {
             Ok(data) => {
                 let delegate = GridDelegate {
@@ -852,6 +855,7 @@ impl Omdbx {
                 self.error = Some(message);
             }
         }
+        self.query_ms = Some(started.elapsed().as_millis());
         self.loading = false;
         cx.notify();
     }
@@ -1238,19 +1242,6 @@ impl Omdbx {
             )
     }
 
-    fn keycap(label: &'static str, colors: gpui_kit::component::ThemeColor) -> impl IntoElement {
-        div()
-            .h(px(18.))
-            .px(px(5.))
-            .rounded(px(4.))
-            .border_1()
-            .border_color(colors.border)
-            .bg(colors.background)
-            .text_size(px(11.))
-            .text_color(colors.muted_foreground)
-            .child(label)
-    }
-
     fn empty_state(
         title: &'static str,
         hint: impl IntoElement,
@@ -1280,46 +1271,254 @@ impl Omdbx {
             )
     }
 
+    fn query_crumb(
+        label: String,
+        colors: gpui_kit::component::ThemeColor,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let muted = colors.muted_foreground;
+        h_flex()
+            .id(SharedString::from(format!("crumb-{label}")))
+            .h(px(28.))
+            .px_1()
+            .gap_1()
+            .items_center()
+            .rounded_md()
+            .cursor_pointer()
+            .hover(|style| style.bg(colors.sidebar_accent))
+            .child(div().text_size(px(13.)).child(label))
+            .child(Icon::new(IconName::ChevronDown).xsmall().text_color(muted))
+            .on_click(cx.listener(|this, _, _, cx| this.show_notice("选择未完成", cx)))
+    }
+
     fn query_pane(&self, _tab: &Option<Tab>, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
+        let muted = colors.muted_foreground;
+        let (connection_name, database, schema) = self
+            .query_target()
+            .map(|(connection, database, schema)| (connection.name, database, schema))
+            .unwrap_or_else(|| ("未连接".to_string(), "main".to_string(), "main".to_string()));
+        let editor = self
+            .active_query
+            .and_then(|index| self.queries.get(index))
+            .map(|query| query.editor.clone());
+        let rows = self.rows.len();
+        let elapsed = if self.loading {
+            "执行中…".to_string()
+        } else {
+            self.query_ms
+                .map(|ms| format!("{ms} ms"))
+                .unwrap_or_else(|| "—".to_string())
+        };
+
         v_flex()
             .flex_1()
             .h_full()
             .min_w_0()
+            // connection, database and schema pickers, then the actions
+            .child(
+                h_flex()
+                    .h(px(48.))
+                    .flex_none()
+                    .px_3()
+                    .gap_1()
+                    .items_center()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .child(
+                        h_flex()
+                            .id("query-connection")
+                            .h(px(28.))
+                            .px_2()
+                            .gap_1()
+                            .items_center()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .hover(|style| style.bg(colors.sidebar_accent))
+                            .child(
+                                Icon::new(AssetIcon::Database)
+                                    .with_size(px(16.))
+                                    .text_color(muted),
+                            )
+                            .child(div().text_size(px(13.)).child(connection_name))
+                            .child(
+                                Icon::new(IconName::ChevronDown)
+                                    .xsmall()
+                                    .text_color(muted),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_notice("选择连接未完成", cx)
+                            })),
+                    )
+                    .child(div().text_size(px(12.)).text_color(muted).child("/"))
+                    .child(Self::query_crumb(database, colors, cx))
+                    .child(div().text_size(px(12.)).text_color(muted).child("/"))
+                    .child(Self::query_crumb(schema, colors, cx))
+                    .child(div().flex_1())
+                    .child(Self::icon_button(
+                        "format-sql",
+                        Icon::new(AssetIcon::Wand)
+                            .with_size(px(16.))
+                            .text_color(muted)
+                            .into_any_element(),
+                        colors,
+                        cx.listener(|this, _, _, cx| this.show_notice("格式化未完成", cx)),
+                    ))
+                    .child(Self::icon_button(
+                        "query-info",
+                        Icon::new(AssetIcon::Info)
+                            .with_size(px(16.))
+                            .text_color(muted)
+                            .into_any_element(),
+                        colors,
+                        cx.listener(|this, _, _, cx| this.show_notice("查询信息未完成", cx)),
+                    ))
+                    .child(
+                        Button::new("run-query")
+                            .primary()
+                            .small()
+                            .icon(Icon::new(AssetIcon::Play).with_size(px(16.)))
+                            .label("运行")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.run_query(window, cx)
+                            })),
+                    ),
+            )
+            // editor
             .child(
                 v_flex()
-                    .h(px(240.))
+                    .h(gpui_kit::relative(0.52))
                     .flex_none()
+                    .min_h_0()
+                    .px_3()
+                    .py_2()
                     .font_family(cx.theme().mono_font_family.clone())
                     .text_size(px(13.))
-                    .child(match self
-                        .active_query
-                        .and_then(|index| self.queries.get(index))
-                    {
-                        Some(query) => Editor::new(&query.editor)
+                    .child(match editor {
+                        Some(state) => Editor::new(&state)
                             .h(gpui_kit::relative(1.))
                             .into_any_element(),
                         None => div().into_any_element(),
                     }),
             )
+            // result header
+            .child(
+                h_flex()
+                    .h(px(44.))
+                    .flex_none()
+                    .px_3()
+                    .gap_1()
+                    .items_center()
+                    .border_t_1()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .child(
+                        v_flex()
+                            .h_full()
+                            .justify_center()
+                            .border_b_2()
+                            .border_color(colors.foreground)
+                            .px_1()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_size(px(13.))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child("结果"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(muted)
+                                            .child(rows.to_string()),
+                                    ),
+                            ),
+                    )
+                    .child(div().flex_1())
+                    .child(Self::icon_button(
+                        "rerun-query",
+                        Icon::new(AssetIcon::RotateCw)
+                            .with_size(px(16.))
+                            .text_color(muted)
+                            .into_any_element(),
+                        colors,
+                        cx.listener(|this, _, window, cx| this.run_query(window, cx)),
+                    ))
+                    .child(Self::icon_button(
+                        "download-results",
+                        Icon::new(AssetIcon::Download)
+                            .with_size(px(16.))
+                            .text_color(muted)
+                            .into_any_element(),
+                        colors,
+                        cx.listener(|this, _, _, cx| this.show_notice("导出未完成", cx)),
+                    ))
+                    .child(Self::icon_button(
+                        "more-results",
+                        Icon::new(AssetIcon::Ellipsis)
+                            .with_size(px(16.))
+                            .text_color(muted)
+                            .into_any_element(),
+                        colors,
+                        cx.listener(|this, _, _, cx| this.show_notice("更多操作未完成", cx)),
+                    )),
+            )
+            // results
             .child(match self.grid.clone() {
                 Some(grid) => div()
                     .flex_1()
                     .min_h_0()
                     .child(self.table_frame(&grid, colors))
                     .into_any_element(),
-                None => Self::empty_state(
-                    "写 SQL，点运行",
-                    h_flex()
-                        .gap_1()
-                        .items_center()
-                        .child(Self::keycap("⌘", colors))
-                        .child(Self::keycap("↵", colors))
-                        .child("运行"),
-                    colors,
-                )
-                .into_any_element(),
+                None => v_flex()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(muted)
+                            .child(match &self.error {
+                                Some(message) => message.clone(),
+                                None => "运行查询查看结果".to_string(),
+                            }),
+                    )
+                    .into_any_element(),
             })
+            // status bar
+            .child(
+                h_flex()
+                    .h(px(32.))
+                    .flex_none()
+                    .px_3()
+                    .gap_3()
+                    .items_center()
+                    .border_t_1()
+                    .border_color(colors.border)
+                    .text_size(px(11.))
+                    .text_color(muted)
+                    .child(format!("{} 行", rows))
+                    .child(div().text_color(colors.border).child("|"))
+                    .child(div().child("未选择"))
+                    .child(div().text_color(colors.border).child("|"))
+                    .child(div().child(elapsed))
+                    .child(div().flex_1())
+                    .child(div().child("第 1/1 页"))
+                    .child(
+                        Icon::new(AssetIcon::ChevronLeft)
+                            .with_size(px(14.))
+                            .text_color(muted),
+                    )
+                    .child(
+                        Icon::new(AssetIcon::ChevronRight)
+                            .with_size(px(14.))
+                            .text_color(muted),
+                    )
+                    .child(div().child(format!("{} 行/页", ROW_LIMIT))),
+            )
     }
 
     /// Tabs live in the titlebar row, outside the content card.
@@ -1415,36 +1614,26 @@ impl Omdbx {
             .flex_1()
             .h_full()
             .min_w_0()
-            // context bar: what is open, on which connection, and the actions
-            .child(
-                h_flex()
-                    .h(px(44.))
-                    .flex_none()
-                    .px_4()
-                    .gap_3()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_size(px(15.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(title),
-                    )
-                    .child(div().text_size(px(12.)).text_color(muted).child(meta))
-                    .child(div().flex_1())
-                    .when(self.show_query, |this| {
-                        this.child(
-                            Button::new("run-query")
-                                .primary()
-                                .small()
-                                .icon(Icon::new(AssetIcon::Play).with_size(px(16.)))
-                                .label("运行")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.run_query(window, cx)
-                                })),
+            // context bar for table tabs; the query page has its own toolbar
+            .when(!self.show_query, |this| {
+                this.child(
+                    h_flex()
+                        .h(px(44.))
+                        .flex_none()
+                        .px_4()
+                        .gap_3()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_size(px(15.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(title),
                         )
-                    })
-                    .child(div().text_size(px(12.)).text_color(muted).child(status)),
-            )
+                        .child(div().text_size(px(12.)).text_color(muted).child(meta))
+                        .child(div().flex_1())
+                        .child(div().text_size(px(12.)).text_color(muted).child(status)),
+                )
+            })
             // body
             .child(if self.show_query {
                 self.query_pane(&tab, cx).into_any_element()
