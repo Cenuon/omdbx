@@ -1430,27 +1430,23 @@ impl Omdbx {
                         colors,
                         cx.listener(|this, _, _, cx| this.show_notice("设置未完成", cx)),
                     ))
-                    .child({
-                        let update = self.update.clone();
-                        let color = update
-                            .as_ref()
-                            .map(|info| info.level.color())
-                            .unwrap_or(colors.muted_foreground);
-                        Self::icon_button(
+                    // no update, no icon
+                    .when_some(self.update.clone(), |this, update| {
+                        let color = update.level.color();
+                        this.child(Self::icon_button(
                             "update",
                             Icon::new(AssetIcon::CircleArrowUp)
                                 .with_size(px(16.))
                                 .text_color(color)
                                 .into_any_element(),
                             colors,
-                            cx.listener(move |this, _, _, cx| match &update {
-                                Some(info) => this.show_notice(
-                                    &format!("新版本 {} 可用", info.version),
+                            cx.listener(move |this, _, _, cx| {
+                                this.show_notice(
+                                    &format!("新版本 {} 可用", update.version),
                                     cx,
-                                ),
-                                None => this.show_notice("已是最新版本", cx),
+                                )
                             }),
-                        )
+                        ))
                     }),
             )
     }
