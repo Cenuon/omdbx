@@ -1802,7 +1802,13 @@ impl Omdbx {
                                 .bg(colors.sidebar)
                                 .border_b_1()
                                 .border_color(colors.border.opacity(0.4))
-                                .shadow_sm()
+                                .shadow(vec![gpui_kit::BoxShadow::new(
+                                    px(0.),
+                                    px(8.),
+                                    gpui_kit::hsla(0., 0., 0., 0.08),
+                                )
+                                .blur_radius(px(6.))
+                                .spread_radius(px(-6.))])
                                 .children(sticky),
                         )
                     })
