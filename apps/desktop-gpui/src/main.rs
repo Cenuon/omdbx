@@ -655,22 +655,29 @@ fn edit_sql_literal(value: &str, data_type: &str, db_type: &str) -> String {
     format!("'{escaped}'")
 }
 
-fn update_cell_sql(
+fn update_row_sql(
     connection: &Connection,
     table: &str,
-    column: &str,
-    column_type: &str,
-    value: &str,
+    assignments: &[(String, String, String)],
     keys: &[(String, String, String)],
 ) -> Result<String, String> {
+    if assignments.is_empty() {
+        return Err("没有需要保存的修改".to_string());
+    }
     if keys.is_empty() {
         return Err("这张表没有主键，暂不支持编辑".to_string());
     }
-    let assignment = format!(
-        "{} = {}",
-        connection.quote(column),
-        edit_sql_literal(value, column_type, &connection.db_type)
-    );
+    let assignments = assignments
+        .iter()
+        .map(|(column, column_type, value)| {
+            format!(
+                "{} = {}",
+                connection.quote(column),
+                edit_sql_literal(value, column_type, &connection.db_type)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     let predicates = keys
         .iter()
         .map(|(name, data_type, original)| {
@@ -687,7 +694,7 @@ fn update_cell_sql(
         .collect::<Vec<_>>()
         .join(" AND ");
     Ok(format!(
-        "UPDATE {} SET {assignment} WHERE {predicates}",
+        "UPDATE {} SET {assignments} WHERE {predicates}",
         connection.quote(table)
     ))
 }
@@ -820,6 +827,18 @@ struct EditingCell {
     row: usize,
     col: usize,
     input: Entity<InputState>,
+}
+
+#[derive(Clone)]
+struct PendingEdit {
+    tab_key: String,
+    page: usize,
+    column: String,
+    column_type: String,
+    original: String,
+    value: String,
+    /// Primary-key columns and the values that identify this row.
+    keys: Vec<(String, String, String)>,
 }
 
 struct GridDelegate {
@@ -1109,14 +1128,14 @@ fn cell_context_menu(
     menu = menu.item(
         PopupMenuItem::new("设置为空白字符串").on_click(move |_, _, cx| {
             let _ = setter.update(cx, |this, cx| {
-                this.write_cell_value(row, col, "", cx)
+                this.stage_cell_value(row, col, "", cx)
             });
         }),
     );
     let setter = weak.clone();
     menu = menu.item(PopupMenuItem::new("设置为 NULL").on_click(move |_, _, cx| {
         let _ = setter.update(cx, |this, cx| {
-            this.write_cell_value(row, col, "NULL", cx)
+            this.stage_cell_value(row, col, "NULL", cx)
         });
     }));
 
@@ -1127,13 +1146,13 @@ fn cell_context_menu(
         menu.item(PopupMenuItem::new("UUID v4").on_click(move |_, _, cx| {
             let value = uuid::Uuid::new_v4().to_string();
             let _ = v4.update(cx, |this, cx| {
-                this.write_cell_value(row, col, &value, cx)
+                this.stage_cell_value(row, col, &value, cx)
             });
         }))
         .item(PopupMenuItem::new("UUID v7").on_click(move |_, _, cx| {
             let value = uuid::Uuid::now_v7().to_string();
             let _ = v7.update(cx, |this, cx| {
-                this.write_cell_value(row, col, &value, cx)
+                this.stage_cell_value(row, col, &value, cx)
             });
         }))
     });
@@ -1200,7 +1219,7 @@ fn cell_context_menu(
         match text {
             Some(text) => {
                 let _ = paste.update(cx, |this, cx| {
-                    this.write_cell_value(row, col, &text, cx)
+                    this.stage_cell_value(row, col, &text, cx)
                 });
             }
             None => {
@@ -1451,6 +1470,8 @@ struct Omdbx {
     query_ms: Option<u128>,
     column_meta: Vec<ColumnMeta>,
     show_comments: bool,
+    pending_edits: HashMap<(usize, usize), PendingEdit>,
+    saving: bool,
     update: Option<UpdateInfo>,
     search_open: bool,
     filters_visible: bool,
@@ -1574,6 +1595,8 @@ impl Omdbx {
             query_ms: None,
             column_meta: Vec::new(),
             show_comments: true,
+            pending_edits: HashMap::new(),
+            saving: false,
             update: None,
             search_open: false,
             filters_visible: true,
@@ -1796,6 +1819,11 @@ impl Omdbx {
     }
 
     fn load_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A reload rebuilds the rows, so staged edits no longer map to them.
+        if !self.pending_edits.is_empty() {
+            self.pending_edits.clear();
+            self.show_notice("未保存的修改已丢弃", cx);
+        }
         let Some(index) = self.active else { return };
         let Some(tab) = self.tabs.get(index).cloned() else { return };
         let Some(connection) = self
@@ -1972,43 +2000,37 @@ impl Omdbx {
             table.delegate_mut().editing = None;
             cx.notify();
         });
-        self.write_cell_value(edit.row, edit.col, &value, cx);
+        self.stage_cell_value(edit.row, edit.col, &value, cx);
     }
 
-    fn write_cell_value(&mut self, row: usize, col: usize, value: &str, cx: &mut Context<Self>) {
-        if self.show_query {
-            return;
-        }
-        let Some(tab) = self.active.and_then(|index| self.tabs.get(index)).cloned() else {
-            return;
-        };
-        let Some(connection) = self
-            .connections
-            .iter()
-            .find(|item| item.id == tab.connection_id)
-            .cloned()
-        else {
-            return;
-        };
-        let Some(original) = self
+    fn set_local_cell(&mut self, row: usize, col: usize, value: &str, cx: &mut Context<Self>) {
+        if let Some(cell) = self
             .rows
-            .get(row)
-            .and_then(|cells| cells.get(col))
-            .cloned()
-        else {
-            return;
-        };
-        if value == original {
-            return;
+            .get_mut(row)
+            .and_then(|cells| cells.get_mut(col))
+        {
+            *cell = value.to_string();
         }
-        let Some(column) = self.columns.get(col).cloned() else {
-            return;
-        };
-        let column_type = self
-            .column_meta
-            .get(col)
-            .map(|meta| meta.data_type.clone())
-            .unwrap_or_default();
+        if let Some(grid) = self.grid.clone() {
+            grid.update(cx, |table, cx| {
+                if let Some(cell) = table
+                    .delegate_mut()
+                    .rows
+                    .get_mut(row)
+                    .and_then(|cells| cells.get_mut(col))
+                {
+                    *cell = value.to_string();
+                }
+                cx.notify();
+            });
+        }
+        cx.notify();
+    }
+
+    fn primary_key_values(
+        &self,
+        row: usize,
+    ) -> Result<Vec<(String, String, String)>, String> {
         let primary_count = self
             .column_meta
             .iter()
@@ -2019,7 +2041,7 @@ impl Omdbx {
             let Some(index) = self.columns.iter().position(|name| name == &meta.name) else {
                 continue;
             };
-            let Some(key_value) = self
+            let Some(value) = self
                 .rows
                 .get(row)
                 .and_then(|cells| cells.get(index))
@@ -2027,67 +2049,202 @@ impl Omdbx {
             else {
                 continue;
             };
-            keys.push((meta.name.clone(), meta.data_type.clone(), key_value));
+            keys.push((meta.name.clone(), meta.data_type.clone(), value));
         }
         if primary_count == 0 || keys.len() != primary_count {
-            self.show_notice("这张表没有主键，暂不支持编辑", cx);
+            return Err("这张表没有主键，暂不支持编辑".to_string());
+        }
+        Ok(keys)
+    }
+
+    fn row_keys(
+        &self,
+        row: usize,
+        tab_key: &str,
+        page: usize,
+    ) -> Result<Vec<(String, String, String)>, String> {
+        if let Some((_, edit)) = self.pending_edits.iter().find(|((row_ix, _), edit)| {
+            *row_ix == row && edit.tab_key == tab_key && edit.page == page
+        }) {
+            return Ok(edit.keys.clone());
+        }
+        self.primary_key_values(row)
+    }
+
+    fn stage_cell_value(
+        &mut self,
+        row: usize,
+        col: usize,
+        value: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if self.show_query {
             return;
         }
-        let sql = match update_cell_sql(
-            &connection,
-            &tab.table,
-            &column,
-            &column_type,
-            value,
-            &keys,
-        ) {
-            Ok(sql) => sql,
+        let Some(tab) = self.active.and_then(|index| self.tabs.get(index)).cloned() else {
+            return;
+        };
+        let page = self.table_page;
+        let Some(current) = self
+            .rows
+            .get(row)
+            .and_then(|cells| cells.get(col))
+            .cloned()
+        else {
+            return;
+        };
+        let Some(column) = self.columns.get(col).cloned() else {
+            return;
+        };
+        let column_type = self
+            .column_meta
+            .get(col)
+            .map(|meta| meta.data_type.clone())
+            .unwrap_or_default();
+        let original = self
+            .pending_edits
+            .get(&(row, col))
+            .filter(|edit| edit.tab_key == tab.key && edit.page == page)
+            .map(|edit| edit.original.clone())
+            .unwrap_or(current);
+        let keys = match self.row_keys(row, &tab.key, page) {
+            Ok(keys) => keys,
             Err(message) => {
                 self.show_notice(&message, cx);
                 return;
             }
         };
+        self.pending_edits.remove(&(row, col));
+        let display = if value == original {
+            original
+        } else {
+            self.pending_edits.insert(
+                (row, col),
+                PendingEdit {
+                    tab_key: tab.key.clone(),
+                    page,
+                    column,
+                    column_type,
+                    original: original.clone(),
+                    value: value.to_string(),
+                    keys,
+                },
+            );
+            value.to_string()
+        };
+        self.set_local_cell(row, col, &display, cx);
+        cx.notify();
+    }
+
+    fn cancel_pending_edits(&mut self, cx: &mut Context<Self>) {
+        if let Some(grid) = self.grid.clone() {
+            grid.update(cx, |table, cx| {
+                table.delegate_mut().editing = None;
+                cx.notify();
+            });
+        }
+        let tab_key = self
+            .active
+            .and_then(|index| self.tabs.get(index))
+            .map(|tab| tab.key.clone());
+        let page = self.table_page;
+        let entries: Vec<((usize, usize), PendingEdit)> = self
+            .pending_edits
+            .iter()
+            .map(|(key, edit)| (*key, edit.clone()))
+            .collect();
+        let mut restored = 0;
+        for ((row, col), edit) in entries {
+            if tab_key.as_deref() == Some(edit.tab_key.as_str()) && edit.page == page {
+                self.set_local_cell(row, col, &edit.original, cx);
+                restored += 1;
+            }
+        }
+        self.pending_edits.clear();
+        cx.notify();
+        if restored == 0 {
+            self.show_notice("没有待取消的修改", cx);
+        } else {
+            self.show_notice("已取消修改", cx);
+        }
+    }
+
+    fn save_pending_edits(&mut self, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
+        if let Some(grid) = self.grid.clone() {
+            self.commit_editing(&grid, cx);
+        }
+        let Some(tab) = self.active.and_then(|index| self.tabs.get(index)).cloned() else {
+            return;
+        };
+        let page = self.table_page;
+        self.pending_edits
+            .retain(|_, edit| edit.tab_key == tab.key && edit.page == page);
+        if self.pending_edits.is_empty() {
+            self.show_notice("没有需要保存的修改", cx);
+            return;
+        }
+        let Some(connection) = self
+            .connections
+            .iter()
+            .find(|item| item.id == tab.connection_id)
+            .cloned()
+        else {
+            return;
+        };
+        let mut grouped: HashMap<
+            usize,
+            (Vec<(String, String, String)>, Vec<(String, String, String)>),
+        > = HashMap::new();
+        for ((row, _), edit) in &self.pending_edits {
+            let group = grouped
+                .entry(*row)
+                .or_insert_with(|| (Vec::new(), edit.keys.clone()));
+            group.0.push((
+                edit.column.clone(),
+                edit.column_type.clone(),
+                edit.value.clone(),
+            ));
+        }
+        let mut statements = Vec::with_capacity(grouped.len());
+        for (_, (assignments, keys)) in grouped {
+            match update_row_sql(&connection, &tab.table, &assignments, &keys) {
+                Ok(sql) => statements.push(sql),
+                Err(message) => {
+                    self.show_notice(&message, cx);
+                    return;
+                }
+            }
+        }
+        let saved_keys: Vec<(usize, usize)> = self.pending_edits.keys().copied().collect();
         let connection = connection.clone();
         let database = tab.database.clone();
         let schema = tab.schema.clone();
+        self.saving = true;
         let task = cx.background_executor().spawn(async move {
-            run_sql(&connection, &database, &schema, &sql, 1)
+            for sql in statements {
+                run_sql(&connection, &database, &schema, &sql, 1)?;
+            }
+            Ok::<(), String>(())
         });
-        let value = value.to_string();
-        let grid = self.grid.clone();
         cx.spawn(async move |weak, cx| {
             let result = task.await;
-            let _ = weak.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    let same_grid = match (&this.grid, &grid) {
-                        (Some(current), Some(grid)) => current.entity_id() == grid.entity_id(),
-                        _ => false,
-                    };
-                    if same_grid {
-                        if let Some(cell) = this
-                            .rows
-                            .get_mut(row)
-                            .and_then(|cells| cells.get_mut(col))
-                        {
-                            *cell = value.clone();
+            let _ = weak.update(cx, |this, cx| {
+                this.saving = false;
+                match result {
+                    Ok(()) => {
+                        for key in &saved_keys {
+                            this.pending_edits.remove(key);
                         }
-                        if let Some(grid) = &grid {
-                            grid.update(cx, |table, cx| {
-                                if let Some(cell) = table
-                                    .delegate_mut()
-                                    .rows
-                                    .get_mut(row)
-                                    .and_then(|cells| cells.get_mut(col))
-                                {
-                                    *cell = value.clone();
-                                }
-                                cx.notify();
-                            });
-                        }
+                        this.show_notice(
+                            &format!("已保存 {} 处修改", saved_keys.len()),
+                            cx,
+                        );
                     }
-                    this.show_notice("已更新", cx);
+                    Err(error) => this.show_notice(&format!("保存失败: {error}"), cx),
                 }
-                Err(error) => this.show_notice(&format!("更新失败: {error}"), cx),
             });
         })
         .detach();
@@ -3798,7 +3955,7 @@ impl Omdbx {
                     .text_color(muted)
                     .into_any_element(),
                 colors,
-                cx.listener(|this, _, _, cx| this.show_notice("保存修改未完成", cx)),
+                cx.listener(|this, _, _, cx| this.save_pending_edits(cx)),
             ))
             .child(Self::icon_button(
                 "row-cancel",
@@ -3808,7 +3965,7 @@ impl Omdbx {
                     .child("✕")
                     .into_any_element(),
                 colors,
-                cx.listener(|this, _, _, cx| this.show_notice("取消修改未完成", cx)),
+                cx.listener(|this, _, _, cx| this.cancel_pending_edits(cx)),
             ))
             .child(Self::icon_button(
                 "table-reload",
@@ -4798,7 +4955,8 @@ mod export_tests {
     #[test]
     fn update_uses_primary_keys_and_escapes_strings() {
         let keys = vec![("id".to_string(), "int".to_string(), "1".to_string())];
-        let sql = update_cell_sql(&connection(), "people", "name", "varchar", "O'Brien", &keys).unwrap();
+        let assignments = vec![("name".to_string(), "varchar".to_string(), "O'Brien".to_string())];
+        let sql = update_row_sql(&connection(), "people", &assignments, &keys).unwrap();
         assert_eq!(
             sql,
             "UPDATE `people` SET `name` = 'O''Brien' WHERE `id` = 1"
@@ -4806,11 +4964,26 @@ mod export_tests {
     }
 
     #[test]
+    fn update_row_groups_columns_into_one_statement() {
+        let keys = vec![("id".to_string(), "int".to_string(), "3".to_string())];
+        let assignments = vec![
+            ("name".to_string(), "varchar".to_string(), "A".to_string()),
+            ("note".to_string(), "varchar".to_string(), "NULL".to_string()),
+        ];
+        let sql = update_row_sql(&connection(), "people", &assignments, &keys).unwrap();
+        assert_eq!(
+            sql,
+            "UPDATE `people` SET `name` = 'A', `note` = NULL WHERE `id` = 3"
+        );
+    }
+
+    #[test]
     fn update_matches_a_null_key_and_rejects_keyless_tables() {
         let keys = vec![("id".to_string(), "int".to_string(), "NULL".to_string())];
-        let sql = update_cell_sql(&connection(), "people", "name", "varchar", "x", &keys).unwrap();
+        let assignments = vec![("name".to_string(), "varchar".to_string(), "x".to_string())];
+        let sql = update_row_sql(&connection(), "people", &assignments, &keys).unwrap();
         assert!(sql.ends_with("WHERE `id` IS NULL"));
-        assert!(update_cell_sql(&connection(), "people", "name", "varchar", "x", &[]).is_err());
+        assert!(update_row_sql(&connection(), "people", &assignments, &[]).is_err());
     }
 
     #[test]
