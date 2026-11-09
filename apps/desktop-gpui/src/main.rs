@@ -12,7 +12,7 @@ use rust_xlsxwriter::Workbook;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState, Enter, IndentInline, MoveDown, MoveUp};
-use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::Selectable;
 use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableEvent, TableState};
@@ -820,15 +820,6 @@ struct EditingCell {
     row: usize,
     col: usize,
     input: Entity<InputState>,
-    connection: Connection,
-    database: String,
-    schema: String,
-    table: String,
-    column: String,
-    column_type: String,
-    original: String,
-    /// Primary-key columns and the values that identify this row.
-    keys: Vec<(String, String, String)>,
 }
 
 struct GridDelegate {
@@ -838,6 +829,8 @@ struct GridDelegate {
     show_comments: bool,
     row_offset: usize,
     editing: Option<EditingCell>,
+    /// Present for table tabs; query-result grids are read-only.
+    weak: Option<gpui_kit::WeakEntity<Omdbx>>,
 }
 
 impl TableDelegate for GridDelegate {
@@ -1047,7 +1040,9 @@ impl TableDelegate for GridDelegate {
             .get(col - 1)
             .map(|meta| is_numeric_type(&meta.data_type))
             .unwrap_or(false);
-        div()
+        let column_name = self.columns.get(col - 1).cloned().unwrap_or_default();
+        let cell = div()
+            .id(SharedString::from(format!("cell-body-{row}-{col}")))
             .h_full()
             .w_full()
             .flex()
@@ -1072,11 +1067,230 @@ impl TableDelegate for GridDelegate {
                     .text_size(px(13.))
                     .when(numeric, |this| this.text_right().font_features(tabular()))
                     .when(is_null, |this| this.text_color(muted))
-                    .child(text),
-            )
-            .into_any_element()
+                    .child(text.clone()),
+            );
+        if let Some(weak) = self.weak.clone() {
+            let table = cx.entity();
+            let data_col = col - 1;
+            return cell
+                .context_menu(move |menu, window, cx| {
+                    cell_context_menu(
+                        menu,
+                        window,
+                        cx,
+                        weak.clone(),
+                        table.clone(),
+                        row,
+                        data_col,
+                        column_name.clone(),
+                        text.clone(),
+                    )
+                })
+                .into_any_element();
+        }
+        cell.into_any_element()
     }
 }
+
+fn cell_context_menu(
+    menu: PopupMenu,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+    weak: gpui_kit::WeakEntity<Omdbx>,
+    table: Entity<TableState<GridDelegate>>,
+    row: usize,
+    col: usize,
+    column: String,
+    value: String,
+) -> PopupMenu {
+    let mut menu = menu;
+
+    let setter = weak.clone();
+    menu = menu.item(
+        PopupMenuItem::new("设置为空白字符串").on_click(move |_, _, cx| {
+            let _ = setter.update(cx, |this, cx| {
+                this.write_cell_value(row, col, "", cx)
+            });
+        }),
+    );
+    let setter = weak.clone();
+    menu = menu.item(PopupMenuItem::new("设置为 NULL").on_click(move |_, _, cx| {
+        let _ = setter.update(cx, |this, cx| {
+            this.write_cell_value(row, col, "NULL", cx)
+        });
+    }));
+
+    let uuid_weak = weak.clone();
+    menu = menu.submenu("生成 UUID", window, cx, move |menu, _, _| {
+        let v4 = uuid_weak.clone();
+        let v7 = uuid_weak.clone();
+        menu.item(PopupMenuItem::new("UUID v4").on_click(move |_, _, cx| {
+            let value = uuid::Uuid::new_v4().to_string();
+            let _ = v4.update(cx, |this, cx| {
+                this.write_cell_value(row, col, &value, cx)
+            });
+        }))
+        .item(PopupMenuItem::new("UUID v7").on_click(move |_, _, cx| {
+            let value = uuid::Uuid::now_v7().to_string();
+            let _ = v7.update(cx, |this, cx| {
+                this.write_cell_value(row, col, &value, cx)
+            });
+        }))
+    });
+
+    let edit = weak.clone();
+    menu = menu.item(
+        PopupMenuItem::new("在单元格编辑器中编辑").on_click(move |_, window, cx| {
+            let _ = edit.update(cx, |this, cx| {
+                this.begin_cell_edit(row, col + 1, &table, window, cx)
+            });
+        }),
+    );
+
+    let add = weak.clone();
+    let remove = weak.clone();
+    menu = menu
+        .separator()
+        .item(PopupMenuItem::new("添加记录").on_click(move |_, _, cx| {
+            let _ = add.update(cx, |this, cx| this.show_notice("添加记录未完成", cx));
+        }))
+        .item(PopupMenuItem::new("删除记录...").on_click(move |_, _, cx| {
+            let _ =
+                remove.update(cx, |this, cx| this.show_notice("删除记录未完成", cx));
+        }));
+
+    let copy = value.clone();
+    let copy_name = column.clone();
+    menu = menu
+        .separator()
+        .item(PopupMenuItem::new("复制").on_click(move |_, _, cx| {
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(copy.clone()));
+        }))
+        .item(
+            PopupMenuItem::new("复制字段名称").on_click(move |_, _, cx| {
+                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
+                    copy_name.clone(),
+                ));
+            }),
+        );
+
+    let copy_value = value.clone();
+    menu = menu.submenu("复制为", window, cx, move |menu, _, _| {
+        let csv = csv_field(&copy_value);
+        let json = serde_json::to_string(&copy_value).unwrap_or_default();
+        let sql = format!("'{}'", copy_value.replace('\'', "''"));
+        menu.item(PopupMenuItem::new("CSV").on_click(move |_, _, cx| {
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(csv.clone()));
+        }))
+        .item(PopupMenuItem::new("JSON").on_click(move |_, _, cx| {
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
+                json.clone(),
+            ));
+        }))
+        .item(PopupMenuItem::new("SQL").on_click(move |_, _, cx| {
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(sql.clone()));
+        }))
+    });
+
+    let paste = weak.clone();
+    menu = menu.item(PopupMenuItem::new("粘贴").on_click(move |_, _, cx| {
+        let text = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text());
+        match text {
+            Some(text) => {
+                let _ = paste.update(cx, |this, cx| {
+                    this.write_cell_value(row, col, &text, cx)
+                });
+            }
+            None => {
+                let _ =
+                    paste.update(cx, |this, cx| this.show_notice("剪贴板没有文本", cx));
+            }
+        }
+    }));
+
+    let save = weak.clone();
+    menu = menu.item(
+        PopupMenuItem::new("保存数据为...").on_click(move |_, _, cx| {
+            let _ = save.update(cx, |this, cx| {
+                this.export_table(ExportFormat::Csv, true, cx)
+            });
+        }),
+    );
+
+    menu = menu.separator();
+    let toggle = weak.clone();
+    menu = menu.item(
+        PopupMenuItem::new("显示/隐藏筛选&排序").on_click(move |_, _, cx| {
+            let _ = toggle.update(cx, |this, cx| {
+                this.filters_visible = !this.filters_visible;
+                cx.notify();
+            });
+        }),
+    );
+
+    let filter = weak.clone();
+    let clear_filter = weak.clone();
+    menu = menu.submenu("筛选", window, cx, move |menu, _, _| {
+        let by_value = filter.clone();
+        let clear = clear_filter.clone();
+        menu.item(
+            PopupMenuItem::new("按此值筛选").on_click(move |_, window, cx| {
+                let _ = by_value.update(cx, |this, cx| {
+                    this.filter_by_cell(row, col, window, cx)
+                });
+            }),
+        )
+        .item(PopupMenuItem::new("清空筛选").on_click(move |_, window, cx| {
+            let _ = clear.update(cx, |this, cx| this.clear_where(window, cx));
+        }))
+    });
+
+    let sort = weak.clone();
+    menu = menu.submenu("排序", window, cx, move |menu, _, _| {
+        let asc = sort.clone();
+        let desc = sort.clone();
+        menu.item(PopupMenuItem::new("升序").on_click(move |_, window, cx| {
+            let _ = asc.update(cx, |this, cx| this.sort_by_cell(col, true, window, cx));
+        }))
+        .item(PopupMenuItem::new("降序").on_click(move |_, window, cx| {
+            let _ =
+                desc.update(cx, |this, cx| this.sort_by_cell(col, false, window, cx));
+        }))
+    });
+
+    let clear_all = weak.clone();
+    menu = menu.item(
+        PopupMenuItem::new("移除所有筛选 & 排序").on_click(move |_, window, cx| {
+            let _ =
+                clear_all.update(cx, |this, cx| this.remove_filters(window, cx));
+        }),
+    );
+
+    let zoom = weak.clone();
+    menu = menu.separator().submenu("缩放", window, cx, move |menu, _, _| {
+        let w100 = zoom.clone();
+        let w125 = zoom.clone();
+        let w150 = zoom.clone();
+        menu.item(PopupMenuItem::new("100%").on_click(move |_, _, cx| {
+            let _ = w100.update(cx, |this, cx| this.show_notice("缩放未完成", cx));
+        }))
+        .item(PopupMenuItem::new("125%").on_click(move |_, _, cx| {
+            let _ = w125.update(cx, |this, cx| this.show_notice("缩放未完成", cx));
+        }))
+        .item(PopupMenuItem::new("150%").on_click(move |_, _, cx| {
+            let _ = w150.update(cx, |this, cx| this.show_notice("缩放未完成", cx));
+        }))
+    });
+
+    let refresh = weak.clone();
+    menu.item(PopupMenuItem::new("刷新").on_click(move |_, window, cx| {
+        let _ = refresh.update(cx, |this, cx| this.load_active(window, cx));
+    }))
+}
+
+
 
 fn data_type_color(data_type: &str, muted: Hsla) -> Hsla {
     let ty = data_type.to_ascii_lowercase();
@@ -1239,6 +1453,7 @@ struct Omdbx {
     show_comments: bool,
     update: Option<UpdateInfo>,
     search_open: bool,
+    filters_visible: bool,
     focus_handle: FocusHandle,
     tree_scroll: ScrollHandle,
     tree_row_count: std::cell::Cell<usize>,
@@ -1361,6 +1576,7 @@ impl Omdbx {
             show_comments: true,
             update: None,
             search_open: false,
+            filters_visible: true,
             focus_handle: cx.focus_handle(),
             tree_scroll: ScrollHandle::new(),
             tree_row_count: std::cell::Cell::new(0),
@@ -1631,6 +1847,7 @@ impl Omdbx {
                     show_comments: self.show_comments,
                     row_offset,
                     editing: None,
+                    weak: Some(cx.entity().downgrade()),
                 };
                 self.grid = Some(cx.new(|cx| {
                     TableState::new(delegate, window, cx)
@@ -1681,17 +1898,6 @@ impl Omdbx {
         }
         let col = col - 1;
         self.commit_editing(grid, cx);
-        let Some(tab) = self.active.and_then(|index| self.tabs.get(index)).cloned() else {
-            return;
-        };
-        let Some(connection) = self
-            .connections
-            .iter()
-            .find(|item| item.id == tab.connection_id)
-            .cloned()
-        else {
-            return;
-        };
         let Some(original) = self
             .rows
             .get(row)
@@ -1700,42 +1906,13 @@ impl Omdbx {
         else {
             return;
         };
-        let Some(column) = self.columns.get(col).cloned() else {
-            return;
-        };
-        let column_type = self
-            .column_meta
-            .get(col)
-            .map(|meta| meta.data_type.clone())
-            .unwrap_or_default();
-        let primary_count = self
-            .column_meta
-            .iter()
-            .filter(|meta| meta.is_primary_key)
-            .count();
-        let mut keys = Vec::with_capacity(primary_count);
-        for meta in self.column_meta.iter().filter(|meta| meta.is_primary_key) {
-            let Some(index) = self.columns.iter().position(|name| name == &meta.name) else {
-                continue;
-            };
-            let Some(value) = self
-                .rows
-                .get(row)
-                .and_then(|cells| cells.get(index))
-                .cloned()
-            else {
-                continue;
-            };
-            keys.push((meta.name.clone(), meta.data_type.clone(), value));
-        }
-        if primary_count == 0 || keys.len() != primary_count {
-            self.show_notice("这张表没有主键，暂不支持编辑", cx);
+        if self.columns.get(col).is_none() {
             return;
         }
 
         let input = cx.new(|cx| InputState::new(window, cx));
         input.update(cx, |state, cx| {
-            state.set_value(original.clone(), window, cx);
+            state.set_value(original, window, cx);
             state.select_all(window, cx);
         });
         grid.update(cx, |table, cx| {
@@ -1743,14 +1920,6 @@ impl Omdbx {
                 row,
                 col,
                 input: input.clone(),
-                connection,
-                database: tab.database.clone(),
-                schema: tab.schema.clone(),
-                table: tab.table.clone(),
-                column,
-                column_type,
-                original,
-                keys,
             });
             cx.notify();
         });
@@ -1803,16 +1972,74 @@ impl Omdbx {
             table.delegate_mut().editing = None;
             cx.notify();
         });
-        if value == edit.original {
+        self.write_cell_value(edit.row, edit.col, &value, cx);
+    }
+
+    fn write_cell_value(&mut self, row: usize, col: usize, value: &str, cx: &mut Context<Self>) {
+        if self.show_query {
+            return;
+        }
+        let Some(tab) = self.active.and_then(|index| self.tabs.get(index)).cloned() else {
+            return;
+        };
+        let Some(connection) = self
+            .connections
+            .iter()
+            .find(|item| item.id == tab.connection_id)
+            .cloned()
+        else {
+            return;
+        };
+        let Some(original) = self
+            .rows
+            .get(row)
+            .and_then(|cells| cells.get(col))
+            .cloned()
+        else {
+            return;
+        };
+        if value == original {
+            return;
+        }
+        let Some(column) = self.columns.get(col).cloned() else {
+            return;
+        };
+        let column_type = self
+            .column_meta
+            .get(col)
+            .map(|meta| meta.data_type.clone())
+            .unwrap_or_default();
+        let primary_count = self
+            .column_meta
+            .iter()
+            .filter(|meta| meta.is_primary_key)
+            .count();
+        let mut keys = Vec::with_capacity(primary_count);
+        for meta in self.column_meta.iter().filter(|meta| meta.is_primary_key) {
+            let Some(index) = self.columns.iter().position(|name| name == &meta.name) else {
+                continue;
+            };
+            let Some(key_value) = self
+                .rows
+                .get(row)
+                .and_then(|cells| cells.get(index))
+                .cloned()
+            else {
+                continue;
+            };
+            keys.push((meta.name.clone(), meta.data_type.clone(), key_value));
+        }
+        if primary_count == 0 || keys.len() != primary_count {
+            self.show_notice("这张表没有主键，暂不支持编辑", cx);
             return;
         }
         let sql = match update_cell_sql(
-            &edit.connection,
-            &edit.table,
-            &edit.column,
-            &edit.column_type,
-            &value,
-            &edit.keys,
+            &connection,
+            &tab.table,
+            &column,
+            &column_type,
+            value,
+            &keys,
         ) {
             Ok(sql) => sql,
             Err(message) => {
@@ -1820,40 +2047,43 @@ impl Omdbx {
                 return;
             }
         };
-        let connection = edit.connection.clone();
-        let database = edit.database.clone();
-        let schema = edit.schema.clone();
+        let connection = connection.clone();
+        let database = tab.database.clone();
+        let schema = tab.schema.clone();
         let task = cx.background_executor().spawn(async move {
             run_sql(&connection, &database, &schema, &sql, 1)
         });
-        let grid = grid.clone();
+        let value = value.to_string();
+        let grid = self.grid.clone();
         cx.spawn(async move |weak, cx| {
             let result = task.await;
             let _ = weak.update(cx, |this, cx| match result {
                 Ok(_) => {
-                    let same_grid = this
-                        .grid
-                        .as_ref()
-                        .is_some_and(|current| current.entity_id() == grid.entity_id());
+                    let same_grid = match (&this.grid, &grid) {
+                        (Some(current), Some(grid)) => current.entity_id() == grid.entity_id(),
+                        _ => false,
+                    };
                     if same_grid {
                         if let Some(cell) = this
                             .rows
-                            .get_mut(edit.row)
-                            .and_then(|cells| cells.get_mut(edit.col))
+                            .get_mut(row)
+                            .and_then(|cells| cells.get_mut(col))
                         {
                             *cell = value.clone();
                         }
-                        grid.update(cx, |table, cx| {
-                            if let Some(cell) = table
-                                .delegate_mut()
-                                .rows
-                                .get_mut(edit.row)
-                                .and_then(|cells| cells.get_mut(edit.col))
-                            {
-                                *cell = value.clone();
-                            }
-                            cx.notify();
-                        });
+                        if let Some(grid) = &grid {
+                            grid.update(cx, |table, cx| {
+                                if let Some(cell) = table
+                                    .delegate_mut()
+                                    .rows
+                                    .get_mut(row)
+                                    .and_then(|cells| cells.get_mut(col))
+                                {
+                                    *cell = value.clone();
+                                }
+                                cx.notify();
+                            });
+                        }
                     }
                     this.show_notice("已更新", cx);
                 }
@@ -1861,6 +2091,114 @@ impl Omdbx {
             });
         })
         .detach();
+    }
+
+    fn filter_by_cell(
+        &mut self,
+        row: usize,
+        col: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.active.and_then(|index| self.tabs.get(index)).cloned() else {
+            return;
+        };
+        let Some(connection) = self
+            .connections
+            .iter()
+            .find(|item| item.id == tab.connection_id)
+        else {
+            return;
+        };
+        let Some(value) = self
+            .rows
+            .get(row)
+            .and_then(|cells| cells.get(col))
+            .cloned()
+        else {
+            return;
+        };
+        let Some(column) = self.columns.get(col).cloned() else {
+            return;
+        };
+        let column_type = self
+            .column_meta
+            .get(col)
+            .map(|meta| meta.data_type.clone())
+            .unwrap_or_default();
+        let clause = if value == "NULL" {
+            format!("{} IS NULL", connection.quote(&column))
+        } else {
+            format!(
+                "{} = {}",
+                connection.quote(&column),
+                edit_sql_literal(&value, &column_type, &connection.db_type)
+            )
+        };
+        self.filters_visible = true;
+        self.table_where
+            .update(cx, |state, cx| state.set_value(clause.clone(), window, cx));
+        self.where_value = clause;
+        self.where_open = false;
+        self.table_page = 1;
+        self.load_active(window, cx);
+    }
+
+    fn sort_by_cell(
+        &mut self,
+        col: usize,
+        ascending: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.active.and_then(|index| self.tabs.get(index)).cloned() else {
+            return;
+        };
+        let Some(connection) = self
+            .connections
+            .iter()
+            .find(|item| item.id == tab.connection_id)
+        else {
+            return;
+        };
+        let Some(column) = self.columns.get(col).cloned() else {
+            return;
+        };
+        let clause = format!(
+            "{} {}",
+            connection.quote(&column),
+            if ascending { "ASC" } else { "DESC" }
+        );
+        self.filters_visible = true;
+        self.table_order
+            .update(cx, |state, cx| state.set_value(clause.clone(), window, cx));
+        self.order_value = clause;
+        self.order_open = false;
+        self.table_page = 1;
+        self.load_active(window, cx);
+    }
+
+    fn clear_where(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.table_where
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        self.where_value.clear();
+        self.where_open = false;
+        self.table_page = 1;
+        self.load_active(window, cx);
+    }
+
+    fn remove_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.table_where
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        self.table_order
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        self.where_value.clear();
+        self.order_value.clear();
+        self.where_open = false;
+        self.order_open = false;
+        self.table_page = 1;
+        self.table_has_more = false;
+        self.load_active(window, cx);
     }
 
     fn check_for_update(&self, cx: &mut Context<Self>) {
@@ -2227,6 +2565,7 @@ impl Omdbx {
                     show_comments: self.show_comments,
                     row_offset: 0,
                     editing: None,
+                    weak: None,
                 };
                 self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
                 self.columns = data.columns;
@@ -3963,7 +4302,7 @@ impl Omdbx {
             .h_full()
             .min_w_0()
             // filter bar for table tabs; the query page has its own toolbar
-            .when(!self.show_query, |this| {
+            .when(!self.show_query && self.filters_visible, |this| {
                 this.child(self.table_filter_bar(cx))
             })
             // body
