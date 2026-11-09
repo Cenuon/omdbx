@@ -3,9 +3,12 @@
 //! logic is shared with the Electron build.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+
+use rust_xlsxwriter::Workbook;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState, Enter, IndentInline, MoveDown, MoveUp};
@@ -31,6 +34,9 @@ gpui_kit::actions!(omdbx, [RefreshConnections, ConfirmTab, ConfirmEnter, Suggest
 
 const API: &str = "http://127.0.0.1:4225";
 const ROW_LIMIT: usize = 1000;
+/// Upper bound for a whole-table export; the sidecar keeps the rest of the
+/// table out of the response.
+const EXPORT_MAX_ROWS: usize = 1_000_000;
 
 // ---------------------------------------------------------------- http
 
@@ -290,6 +296,45 @@ fn fetch_rows(
     order_clause: &str,
     row_offset: usize,
 ) -> Result<TableData, String> {
+    let sql = select_sql(connection, table, where_clause, order_clause);
+    let fetch = ROW_LIMIT + 1;
+    let db_type = connection.db_type.to_ascii_lowercase();
+    let sql = match db_type.as_str() {
+        "sqlserver" => {
+            let order = if order_clause.is_empty() {
+                " ORDER BY (SELECT NULL)".to_string()
+            } else {
+                String::new()
+            };
+            format!(
+                "{sql}{order} OFFSET {row_offset} ROWS FETCH NEXT {fetch} ROWS ONLY"
+            )
+        }
+        "oracle" => {
+            let order = if order_clause.is_empty() {
+                " ORDER BY 1".to_string()
+            } else {
+                String::new()
+            };
+            format!(
+                "{sql}{order} OFFSET {row_offset} ROWS FETCH NEXT {fetch} ROWS ONLY"
+            )
+        }
+        _ => format!("{sql} LIMIT {fetch} OFFSET {row_offset}"),
+    };
+    let mut data = run_sql(connection, database, schema, &sql, fetch)?;
+    let has_more = data.rows.len() > ROW_LIMIT;
+    data.rows.truncate(ROW_LIMIT);
+    data.has_more = has_more;
+    Ok(data)
+}
+
+fn select_sql(
+    connection: &Connection,
+    table: &str,
+    where_clause: &str,
+    order_clause: &str,
+) -> String {
     let mut sql = format!("SELECT * FROM {}", connection.quote(table));
     if !where_clause.is_empty() {
         sql.push_str(" WHERE ");
@@ -299,7 +344,25 @@ fn fetch_rows(
         sql.push_str(" ORDER BY ");
         sql.push_str(order_clause);
     }
-    run_sql(connection, database, schema, &sql, row_offset)
+    sql
+}
+
+/// Whole-table export: one query without paging so every row is consistent
+/// with the filter and order currently in the toolbar.
+fn fetch_all_rows(
+    connection: &Connection,
+    database: &str,
+    schema: &str,
+    table: &str,
+    where_clause: &str,
+    order_clause: &str,
+) -> Result<TableData, String> {
+    let sql = select_sql(connection, table, where_clause, order_clause);
+    let mut data = run_sql(connection, database, schema, &sql, EXPORT_MAX_ROWS + 1)?;
+    if data.rows.len() > EXPORT_MAX_ROWS {
+        data.rows.truncate(EXPORT_MAX_ROWS);
+    }
+    Ok(data)
 }
 
 fn run_sql(
@@ -307,7 +370,7 @@ fn run_sql(
     database: &str,
     schema: &str,
     sql: &str,
-    row_offset: usize,
+    max_rows: usize,
 ) -> Result<TableData, String> {
     let value = post_json(
         &format!("{API}/api/query/execute"),
@@ -316,8 +379,7 @@ fn run_sql(
             "database": database,
             "schema": schema,
             "sql": sql,
-            "maxRows": ROW_LIMIT,
-            "rowOffset": row_offset,
+            "maxRows": max_rows,
         }),
     )?;
     let columns = value
@@ -454,6 +516,229 @@ fn cell_text(value: &serde_json::Value) -> String {
     }
 }
 
+fn csv_field(value: &str) -> String {
+    if value.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn export_csv(data: &TableData) -> String {
+    let mut out = String::from("\u{feff}");
+    out.push_str(
+        &data
+            .columns
+            .iter()
+            .map(|value| csv_field(value))
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    out.push('\n');
+    for row in &data.rows {
+        out.push_str(
+            &row.iter()
+                .map(|value| csv_field(value))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        out.push('\n');
+    }
+    out
+}
+
+fn export_json(data: &TableData) -> Result<String, String> {
+    let rows: Vec<serde_json::Value> = data
+        .rows
+        .iter()
+        .map(|row| {
+            let mut object = serde_json::Map::new();
+            for (index, column) in data.columns.iter().enumerate() {
+                object.insert(
+                    column.clone(),
+                    json!(row.get(index).cloned().unwrap_or_default()),
+                );
+            }
+            serde_json::Value::Object(object)
+        })
+        .collect();
+    serde_json::to_string_pretty(&rows).map_err(|error| error.to_string())
+}
+
+fn export_markdown(data: &TableData) -> String {
+    let escape = |value: &str| value.replace('|', "\\|").replace('\n', "<br>");
+    let mut out = String::new();
+    out.push('|');
+    for column in &data.columns {
+        out.push(' ');
+        out.push_str(&escape(column));
+        out.push_str(" |");
+    }
+    out.push('\n');
+    out.push('|');
+    for _ in &data.columns {
+        out.push_str(" --- |");
+    }
+    out.push('\n');
+    for row in &data.rows {
+        out.push('|');
+        for value in row {
+            out.push(' ');
+            out.push_str(&escape(value));
+            out.push_str(" |");
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn export_html(data: &TableData) -> String {
+    let mut out = String::from(
+        "<!doctype html>\n<meta charset=\"utf-8\">\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<thead><tr>",
+    );
+    for column in &data.columns {
+        out.push_str("<th>");
+        out.push_str(&html_escape(column));
+        out.push_str("</th>");
+    }
+    out.push_str("</tr></thead>\n<tbody>\n");
+    for row in &data.rows {
+        out.push_str("<tr>");
+        for value in row {
+            out.push_str("<td>");
+            out.push_str(&html_escape(value));
+            out.push_str("</td>");
+        }
+        out.push_str("</tr>\n");
+    }
+    out.push_str("</tbody>\n</table>\n");
+    out
+}
+
+fn sql_literal(value: &str, data_type: &str) -> String {
+    if value == "NULL" {
+        return "NULL".to_string();
+    }
+    if is_numeric_type(data_type) && value.parse::<f64>().is_ok() {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "''"))
+    }
+}
+
+fn export_sql_insert(data: &TableData, table: &str, connection: &Connection) -> String {
+    let columns = data
+        .columns
+        .iter()
+        .map(|column| connection.quote(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let table = connection.quote(table);
+    let mut out = String::new();
+    for row in &data.rows {
+        let values = row
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let data_type = data
+                    .column_types
+                    .get(index)
+                    .map(String::as_str)
+                    .unwrap_or_default();
+                sql_literal(value, data_type)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!("INSERT INTO {table} ({columns}) VALUES ({values});\n"));
+    }
+    out
+}
+
+fn export_txt(data: &TableData) -> String {
+    let clean = |value: &str| value.replace(['\t', '\n', '\r'], " ");
+    let mut out = String::new();
+    out.push_str(
+        &data
+            .columns
+            .iter()
+            .map(|value| clean(value))
+            .collect::<Vec<_>>()
+            .join("\t"),
+    );
+    out.push('\n');
+    for row in &data.rows {
+        out.push_str(
+            &row.iter()
+                .map(|value| clean(value))
+                .collect::<Vec<_>>()
+                .join("\t"),
+        );
+        out.push('\n');
+    }
+    out
+}
+
+fn write_xlsx(path: &Path, data: &TableData, table: &str) -> Result<(), String> {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    let name: String = table
+        .chars()
+        .map(|ch| match ch {
+            '[' | ']' | ':' | '*' | '?' | '/' | '\\' => '_',
+            other => other,
+        })
+        .take(31)
+        .collect();
+    let _ = sheet.set_name(if name.is_empty() {
+        "Sheet1".to_string()
+    } else {
+        name
+    });
+    for (index, column) in data.columns.iter().enumerate() {
+        sheet
+            .write_string(0, index as u16, column)
+            .map_err(|error| error.to_string())?;
+    }
+    for (row_index, row) in data.rows.iter().enumerate() {
+        for (column_index, value) in row.iter().enumerate() {
+            sheet
+                .write_string((row_index + 1) as u32, column_index as u16, value)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    workbook.save(path).map_err(|error| error.to_string())
+}
+
+fn write_export(
+    path: &Path,
+    format: ExportFormat,
+    data: &TableData,
+    table: &str,
+    connection: &Connection,
+) -> Result<(), String> {
+    if format == ExportFormat::Xlsx {
+        return write_xlsx(path, data, table);
+    }
+    let text = match format {
+        ExportFormat::Csv => export_csv(data),
+        ExportFormat::Json => export_json(data)?,
+        ExportFormat::Markdown => export_markdown(data),
+        ExportFormat::Html => export_html(data),
+        ExportFormat::SqlInsert => export_sql_insert(data, table, connection),
+        ExportFormat::Txt => export_txt(data),
+        ExportFormat::Xlsx => unreachable!(),
+    };
+    std::fs::write(path, text).map_err(|error| error.to_string())
+}
+
 fn encode(value: &str) -> String {
     value
         .bytes()
@@ -476,6 +761,7 @@ struct GridDelegate {
     rows: Vec<Vec<String>>,
     meta: Vec<ColumnMeta>,
     show_comments: bool,
+    row_offset: usize,
 }
 
 impl TableDelegate for GridDelegate {
@@ -645,7 +931,7 @@ impl TableDelegate for GridDelegate {
                 .text_color(muted)
                 .font_family(cx.theme().mono_font_family.clone())
                 .font_features(tabular())
-                .child(format!("{}", row + 1))
+                .child(format!("{}", self.row_offset + row + 1))
                 .into_any_element();
         }
         let text = self
@@ -758,6 +1044,53 @@ struct Tab {
 enum SuggestField {
     Where,
     Order,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExportFormat {
+    Csv,
+    Xlsx,
+    Json,
+    Markdown,
+    Html,
+    SqlInsert,
+    Txt,
+}
+
+impl ExportFormat {
+    const ALL: [ExportFormat; 7] = [
+        ExportFormat::Csv,
+        ExportFormat::Xlsx,
+        ExportFormat::Json,
+        ExportFormat::Markdown,
+        ExportFormat::Html,
+        ExportFormat::SqlInsert,
+        ExportFormat::Txt,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            ExportFormat::Csv => "CSV",
+            ExportFormat::Xlsx => "XLSX",
+            ExportFormat::Json => "JSON",
+            ExportFormat::Markdown => "Markdown",
+            ExportFormat::Html => "HTML",
+            ExportFormat::SqlInsert => "SQL INSERT",
+            ExportFormat::Txt => "TXT",
+        }
+    }
+
+    fn extension(self) -> &'static str {
+        match self {
+            ExportFormat::Csv => "csv",
+            ExportFormat::Xlsx => "xlsx",
+            ExportFormat::Json => "json",
+            ExportFormat::Markdown => "md",
+            ExportFormat::Html => "html",
+            ExportFormat::SqlInsert => "sql",
+            ExportFormat::Txt => "txt",
+        }
+    }
 }
 
 struct Suggestion {
@@ -1195,6 +1528,7 @@ impl Omdbx {
                     rows: data.rows.clone(),
                     meta,
                     show_comments: self.show_comments,
+                    row_offset,
                 };
                 self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
                 self.columns = data.columns;
@@ -1389,6 +1723,91 @@ impl Omdbx {
         .detach();
     }
 
+    fn export_table(
+        &mut self,
+        format: ExportFormat,
+        all_pages: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.active.and_then(|index| self.tabs.get(index)).cloned() else {
+            self.show_notice("没有可导出的表", cx);
+            return;
+        };
+        let Some(connection) = self
+            .connections
+            .iter()
+            .find(|item| item.id == tab.connection_id)
+            .cloned()
+        else {
+            self.show_notice("连接不可用", cx);
+            return;
+        };
+        let columns = self.columns.clone();
+        let rows = self.rows.clone();
+        let column_types = self
+            .column_meta
+            .iter()
+            .map(|meta| meta.data_type.clone())
+            .collect::<Vec<_>>();
+        let where_clause = self.table_where.read(cx).value().trim().to_string();
+        let order_clause = self.table_order.read(cx).value().trim().to_string();
+        let page = self.table_page;
+        let suffix = if all_pages {
+            String::new()
+        } else {
+            format!("_page{page}")
+        };
+        let file_name = format!("{}{}.{}", tab.table, suffix, format.extension());
+        let directory = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join("Downloads"))
+            .filter(|path| path.is_dir())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let receiver = cx.prompt_for_new_path(&directory, Some(&file_name));
+        cx.spawn(async move |weak, cx| {
+            let path = match receiver.await {
+                Ok(Ok(Some(path))) => path,
+                Ok(Ok(None)) => return,
+                Ok(Err(error)) => {
+                    let _ = weak.update(cx, |this, cx| {
+                        this.show_notice(&format!("导出失败: {error}"), cx)
+                    });
+                    return;
+                }
+                Err(_) => return,
+            };
+            let table = tab.table.clone();
+            let task = cx.background_executor().spawn(async move {
+                let data = if all_pages {
+                    fetch_all_rows(
+                        &connection,
+                        &tab.database,
+                        &tab.schema,
+                        &table,
+                        &where_clause,
+                        &order_clause,
+                    )?
+                } else {
+                    TableData {
+                        columns,
+                        column_types,
+                        rows,
+                        has_more: false,
+                    }
+                };
+                let count = data.rows.len();
+                write_export(&path, format, &data, &table, &connection)?;
+                Ok::<usize, String>(count)
+            });
+            let result = task.await;
+            let _ = weak.update(cx, |this, cx| match result {
+                Ok(count) => this.show_notice(&format!("已导出 {count} 行"), cx),
+                Err(error) => this.show_notice(&format!("导出失败: {error}"), cx),
+            });
+        })
+        .detach();
+    }
+
     fn open_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.next_query += 1;
         let number = self.next_query;
@@ -1454,7 +1873,7 @@ impl Omdbx {
         self.loading = true;
         cx.notify();
         let started = std::time::Instant::now();
-        match run_sql(&connection, &database, &schema, &sql, 0) {
+        match run_sql(&connection, &database, &schema, &sql, ROW_LIMIT) {
             Ok(data) => {
                 let mut schema_columns: Vec<ColumnMeta> = Vec::new();
                 for table in sql_tables(&sql) {
@@ -1492,6 +1911,7 @@ impl Omdbx {
                     rows: data.rows.clone(),
                     meta,
                     show_comments: self.show_comments,
+                    row_offset: 0,
                 };
                 self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
                 self.columns = data.columns;
@@ -2490,22 +2910,39 @@ impl Omdbx {
                 }),
             ))
             .child(
-                h_flex()
-                    .id("table-refresh")
-                    .h(px(28.))
-                    .px_2()
-                    .gap_1()
-                    .items_center()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .hover(|style| style.bg(colors.sidebar_accent))
-                    .child(
-                        Icon::new(AssetIcon::RotateCw)
+                Button::new("table-export")
+                    .ghost()
+                    .with_size(gpui_kit::component::Size::Small)
+                    .tooltip("导出")
+                    .icon(
+                        Icon::new(AssetIcon::Download)
                             .with_size(px(16.))
                             .text_color(colors.foreground),
                     )
-                    .child(div().text_size(px(13.)).child("刷新"))
-                    .on_click(cx.listener(|this, _, window, cx| this.load_active(window, cx))),
+                    .dropdown_menu_with_anchor(gpui_kit::Anchor::TopRight, {
+                        let weak = cx.entity().downgrade();
+                        move |menu, window, cx| {
+                            let mut menu = menu.min_w(px(190.));
+                            for format in ExportFormat::ALL {
+                                let weak = weak.clone();
+                                menu = menu.submenu(format.label(), window, cx, move |menu, _, _| {
+                                    let current = weak.clone();
+                                    let all = weak.clone();
+                                    menu.item(PopupMenuItem::new("当前页").on_click(move |_, _, cx| {
+                                        let _ = current.update(cx, |this, cx| {
+                                            this.export_table(format, false, cx)
+                                        });
+                                    }))
+                                    .item(PopupMenuItem::new("全部页").on_click(move |_, _, cx| {
+                                        let _ = all.update(cx, |this, cx| {
+                                            this.export_table(format, true, cx)
+                                        });
+                                    }))
+                                });
+                            }
+                            menu
+                        }
+                    }),
             )
     }
 
@@ -3489,4 +3926,64 @@ fn main() {
         .expect("failed to open window");
         cx.activate(true);
     });
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+
+    fn connection() -> Connection {
+        Connection {
+            id: "test".into(),
+            name: "test".into(),
+            db_type: "mysql".into(),
+            driver_profile: None,
+            host: None,
+            port: None,
+            default_schema: None,
+        }
+    }
+
+    fn data() -> TableData {
+        TableData {
+            columns: vec!["id".into(), "name".into(), "note".into()],
+            column_types: vec!["int".into(), "varchar".into(), "text".into()],
+            rows: vec![
+                vec!["1".into(), "Ann, \"A\"".into(), "NULL".into()],
+                vec!["2".into(), "Bob".into(), "line\nnext".into()],
+            ],
+            has_more: false,
+        }
+    }
+
+    #[test]
+    fn csv_quotes_and_keeps_nulls() {
+        let csv = export_csv(&data());
+        assert!(csv.contains("\"Ann, \"\"A\"\"\""));
+        assert!(csv.contains("\"line\nnext\""));
+        assert!(csv.contains(",NULL\n"));
+    }
+
+    #[test]
+    fn json_uses_column_names() {
+        let value: serde_json::Value = serde_json::from_str(&export_json(&data()).unwrap()).unwrap();
+        assert_eq!(value[0]["name"], "Ann, \"A\"");
+        assert_eq!(value[1]["note"], "line\nnext");
+    }
+
+    #[test]
+    fn sql_insert_quotes_strings_and_keeps_numbers() {
+        let sql = export_sql_insert(&data(), "people", &connection());
+        assert!(sql.contains("INSERT INTO `people` (`id`, `name`, `note`) VALUES (1, 'Ann, \"A\"', NULL);"));
+        assert!(sql.contains("'line\nnext'"));
+    }
+
+    #[test]
+    fn xlsx_is_a_zip_container() {
+        let path = std::env::temp_dir().join("omdbx-export-test.xlsx");
+        write_export(&path, ExportFormat::Xlsx, &data(), "people", &connection()).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..2], b"PK");
+        std::fs::remove_file(path).ok();
+    }
 }
