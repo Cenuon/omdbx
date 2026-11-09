@@ -21,8 +21,8 @@ use gpui_kit::base::{h_resizable, resizable_panel, ResizeHandleRenderer};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     div, px, App, Context, Entity, FocusHandle, FontFeatures, FontWeight, Hsla,
-    InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle, SharedString, Styled,
-    Window, WindowOptions,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollHandle,
+    SharedString, Styled, Window, WindowOptions,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -2281,7 +2281,16 @@ impl Omdbx {
                         colors,
                         cx.listener(|this, _, window, cx| this.open_query(window, cx)),
                     ))
-                    .child(div().flex_1())
+                    // the empty strip after the tabs drags the window, like a titlebar
+                    .child(
+                        div()
+                            .id("titlebar-drag")
+                            .flex_1()
+                            .h_full()
+                            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                window.start_window_move()
+                            }),
+                    )
     }
 
     fn main_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
