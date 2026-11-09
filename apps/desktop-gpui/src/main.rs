@@ -8,9 +8,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::collapsible::Collapsible;
 use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::popover::Popover;
+use gpui_kit::component::Selectable;
 use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableState};
 use gpui_kit::component::{
     h_flex, v_flex, ActiveTheme, Icon, IconName, Sizable, Theme, ThemeMode, TitleBar,
@@ -1396,6 +1397,53 @@ fn connection_icon(key: &str, active: bool) -> Icon {
     Icon::default().data(bytes).with_size(px(16.)).text_color(color)
 }
 
+/// The tools row doubles as a popover trigger; the popover only needs
+/// `Selectable`, and the row carries all of the visual state.
+struct ToolsTrigger(gpui_kit::Stateful<gpui_kit::Div>);
+
+impl Selectable for ToolsTrigger {
+    fn selected(self, _: bool) -> Self {
+        self
+    }
+
+    fn is_selected(&self) -> bool {
+        false
+    }
+}
+
+impl IntoElement for ToolsTrigger {
+    type Element = <gpui_kit::Stateful<gpui_kit::Div> as IntoElement>::Element;
+
+    fn into_element(self) -> Self::Element {
+        self.0.into_element()
+    }
+}
+
+fn tool_menu_row(
+    id: &'static str,
+    icon: AssetIcon,
+    label: &'static str,
+    notice: &'static str,
+    weak: gpui_kit::WeakEntity<Omdbx>,
+    colors: gpui_kit::component::ThemeColor,
+) -> gpui_kit::AnyElement {
+    tree_row(
+        id.to_string(),
+        8.,
+        Icon::new(icon),
+        label.to_string(),
+        colors,
+        move |_, _, cx| {
+            let _ = weak.update(cx, |this, cx| {
+                this.tools_open = false;
+                this.show_notice(notice, cx);
+            });
+        },
+    )
+    .mx(px(0.))
+    .into_any_element()
+}
+
 /// One sidebar tree row: indent, chevron/icon, name, hover.
 fn tree_row(
     id: String,
@@ -1588,108 +1636,84 @@ impl Omdbx {
                         cx.listener(|this, _, window, cx| this.open_query(window, cx)),
                     ))
                     .child(
-                        tree_row(
-                            "menu-tools".to_string(),
-                            12.,
-                            Icon::new(AssetIcon::Toolbox),
-                            "常用工具".to_string(),
-                            colors,
-                            cx.listener(|this, _, _, cx| {
-                                this.tools_open = !this.tools_open;
-                                cx.notify();
-                            }),
-                        )
-                        .child(
-                            Icon::new(if self.tools_open {
-                                IconName::ChevronDown
-                            } else {
-                                IconName::ChevronRight
-                            })
-                            .with_size(px(16.))
-                            .text_color(colors.muted_foreground),
-                        ),
-                    )
-                    .child(
-                        Collapsible::new()
-                            .motion_id("tools-menu")
+                        Popover::new("tools-menu")
                             .open(self.tools_open)
-                            .content(
-                                v_flex()
-                                    .w_full()
-                                    .px_2()
-                                    .child(
-                                        v_flex()
-                                            .w_full()
-                                            .rounded_md()
-                                            .bg(gpui_kit::rgb(0xF2F2F4))
-                                            .gap(px(1.))
-                                            .child(
-                                                tree_row(
-                                                    "tool-transfer".to_string(),
-                                                    12.,
-                                                    Icon::new(AssetIcon::ArrowLeftRight),
-                                                    "数据传输".to_string(),
-                                                    colors,
-                                                    cx.listener(|this, _, _, cx| {
-                                                        this.show_notice("数据传输未完成", cx)
-                                                    }),
-                                                )
-                                                .mx(px(0.)),
-                                            )
-                                            .child(
-                                                tree_row(
-                                                    "tool-backup".to_string(),
-                                                    12.,
-                                                    Icon::new(AssetIcon::DatabaseBackup),
-                                                    "数据备份".to_string(),
-                                                    colors,
-                                                    cx.listener(|this, _, _, cx| {
-                                                        this.show_notice("数据备份未完成", cx)
-                                                    }),
-                                                )
-                                                .mx(px(0.)),
-                                            )
-                                            .child(
-                                                tree_row(
-                                                    "tool-compare-schema".to_string(),
-                                                    12.,
-                                                    Icon::new(AssetIcon::GitCompare),
-                                                    "比较结构".to_string(),
-                                                    colors,
-                                                    cx.listener(|this, _, _, cx| {
-                                                        this.show_notice("比较结构未完成", cx)
-                                                    }),
-                                                )
-                                                .mx(px(0.)),
-                                            )
-                                            .child(
-                                                tree_row(
-                                                    "tool-compare-data".to_string(),
-                                                    12.,
-                                                    Icon::new(AssetIcon::GitCompareArrows),
-                                                    "比较数据".to_string(),
-                                                    colors,
-                                                    cx.listener(|this, _, _, cx| {
-                                                        this.show_notice("比较数据未完成", cx)
-                                                    }),
-                                                )
-                                                .mx(px(0.)),
-                                            )
-                                            .child(
-                                                tree_row(
-                                                    "tool-mcp".to_string(),
-                                                    12.,
-                                                    Icon::new(AssetIcon::Server),
-                                                    "MCP 设置".to_string(),
-                                                    colors,
-                                                    cx.listener(|this, _, _, cx| {
-                                                        this.show_notice("MCP 设置未完成", cx)
-                                                    }),
-                                                )
-                                                .mx(px(0.)),
-                                            ),
-                                    ),
-                            ),
+                            .on_open_change({
+                                let weak = cx.entity().downgrade();
+                                move |open, _, cx| {
+                                    let _ = weak.update(cx, |this, cx| {
+                                        this.tools_open = *open;
+                                        cx.notify();
+                                    });
+                                }
+                            })
+                            .trigger(ToolsTrigger(
+                                tree_row(
+                                    "menu-tools".to_string(),
+                                    12.,
+                                    Icon::new(AssetIcon::Toolbox),
+                                    "常用工具".to_string(),
+                                    colors,
+                                    |_, _, _| {},
+                                )
+                                .child(
+                                    Icon::new(if self.tools_open {
+                                        IconName::ChevronDown
+                                    } else {
+                                        IconName::ChevronRight
+                                    })
+                                    .with_size(px(16.))
+                                    .text_color(colors.muted_foreground),
+                                ),
+                            ))
+                            .content({
+                                let weak = cx.entity().downgrade();
+                                move |_, _, _| {
+                                    v_flex()
+                                        .w(px(196.))
+                                        .gap(px(1.))
+                                        .child(tool_menu_row(
+                                            "tool-transfer",
+                                            AssetIcon::ArrowLeftRight,
+                                            "数据传输",
+                                            "数据传输未完成",
+                                            weak.clone(),
+                                            colors,
+                                        ))
+                                        .child(tool_menu_row(
+                                            "tool-backup",
+                                            AssetIcon::DatabaseBackup,
+                                            "数据备份",
+                                            "数据备份未完成",
+                                            weak.clone(),
+                                            colors,
+                                        ))
+                                        .child(tool_menu_row(
+                                            "tool-compare-schema",
+                                            AssetIcon::GitCompare,
+                                            "比较结构",
+                                            "比较结构未完成",
+                                            weak.clone(),
+                                            colors,
+                                        ))
+                                        .child(tool_menu_row(
+                                            "tool-compare-data",
+                                            AssetIcon::GitCompareArrows,
+                                            "比较数据",
+                                            "比较数据未完成",
+                                            weak.clone(),
+                                            colors,
+                                        ))
+                                        .child(tool_menu_row(
+                                            "tool-mcp",
+                                            AssetIcon::Server,
+                                            "MCP 设置",
+                                            "MCP 设置未完成",
+                                            weak.clone(),
+                                            colors,
+                                        ))
+                                }
+                            }),
                     )
                     .child(self.connections_header(cx)),
             )
