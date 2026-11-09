@@ -1944,16 +1944,16 @@ impl Omdbx {
         let divider = || {
             div()
                 .w(px(1.))
-                .h(px(20.))
+                .h(px(16.))
                 .flex_none()
                 .bg(colors.border)
         };
 
         h_flex()
-            .h(px(44.))
+            .h(px(36.))
             .flex_none()
-            .px_3()
-            .gap_3()
+            .px_2()
+            .gap_2()
             .items_center()
             .border_b_1()
             .border_color(colors.border)
@@ -2014,15 +2014,14 @@ impl Omdbx {
         h_flex()
             .flex_1()
             .min_w_0()
-            .h(px(32.))
-            .px_2()
+            .h(px(26.))
+            .px_1()
             .items_center()
-            .rounded_md()
-            .bg(gpui_kit::rgb(0xECECEE))
             .child(
                 Input::new(state)
                     .appearance(false)
                     .bordered(false)
+                    .with_size(gpui_kit::component::Size::Small)
                     .text_size(px(13.))
                     .prefix(
                         div()
@@ -2064,7 +2063,7 @@ impl Omdbx {
                             .border_color(colors.border)
                             .bg(gpui_kit::rgb(0xF0F0F1)),
                     )
-                    .child(DataTable::new(grid).bordered(false).large().stripe(true).header_row_height(header_height)),
+                    .child(DataTable::new(grid).bordered(false).small().stripe(true).header_row_height(header_height)),
             )
     }
 
