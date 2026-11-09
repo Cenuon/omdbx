@@ -21,8 +21,8 @@ use gpui_kit::base::{h_resizable, resizable_panel, ResizeHandleRenderer};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     deferred, div, px, App, Context, Entity, FocusHandle, FontFeatures, FontWeight, Hsla,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollHandle,
-    SharedString, Styled, Window, WindowOptions,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
+    ScrollHandle, SharedString, Styled, Window, WindowOptions,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -404,6 +404,14 @@ fn sql_tables(sql: &str) -> Vec<String> {
     tables
 }
 
+fn last_word(value: &str) -> String {
+    value
+        .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
 fn cell_text(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Null => "NULL".to_string(),
@@ -712,6 +720,12 @@ struct Tab {
     table: String,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SuggestField {
+    Where,
+    Order,
+}
+
 /// What each flat tree row represents, used to pin ancestors while scrolling.
 enum TreeEntry {
     Connection(String),
@@ -757,6 +771,11 @@ struct Omdbx {
     where_value: String,
     where_open: bool,
     where_suppress_open: bool,
+    where_selected: usize,
+    order_value: String,
+    order_open: bool,
+    order_suppress_open: bool,
+    order_selected: usize,
 }
 
 impl Omdbx {
@@ -767,6 +786,7 @@ impl Omdbx {
         cx.subscribe(&table_where, |this, state, event: &InputEvent, cx| match event {
             InputEvent::Change => {
                 this.where_value = state.read(cx).value().to_string();
+                this.where_selected = 0;
                 if !this.where_suppress_open {
                     this.where_open = true;
                 }
@@ -778,6 +798,26 @@ impl Omdbx {
             }
             InputEvent::Blur => {
                 this.where_open = false;
+                cx.notify();
+            }
+            _ => {}
+        })
+        .detach();
+        cx.subscribe(&table_order, |this, state, event: &InputEvent, cx| match event {
+            InputEvent::Change => {
+                this.order_value = state.read(cx).value().to_string();
+                this.order_selected = 0;
+                if !this.order_suppress_open {
+                    this.order_open = true;
+                }
+                cx.notify();
+            }
+            InputEvent::Focus => {
+                this.order_open = true;
+                cx.notify();
+            }
+            InputEvent::Blur => {
+                this.order_open = false;
                 cx.notify();
             }
             _ => {}
@@ -851,6 +891,11 @@ impl Omdbx {
             where_value: String::new(),
             where_open: false,
             where_suppress_open: false,
+            where_selected: 0,
+            order_value: String::new(),
+            order_open: false,
+            order_suppress_open: false,
+            order_selected: 0,
         };
         this.check_for_update(cx);
         this
@@ -2020,12 +2065,204 @@ impl Omdbx {
             )
     }
 
-    fn where_word(&self) -> String {
-        self.where_value
-            .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .next()
-            .unwrap_or_default()
-            .to_string()
+    fn suggestions_for(&self, value: &str) -> Vec<String> {
+        let word = last_word(value);
+        if word.is_empty() {
+            return Vec::new();
+        }
+        let needle = word.to_lowercase();
+        self.columns
+            .iter()
+            .filter(|column| column.to_lowercase().starts_with(&needle))
+            .take(8)
+            .cloned()
+            .collect()
+    }
+
+    fn suggestion_selection(&self, field: SuggestField) -> usize {
+        match field {
+            SuggestField::Where => self.where_selected,
+            SuggestField::Order => self.order_selected,
+        }
+    }
+
+    fn set_suggestion_selection(&mut self, field: SuggestField, index: usize) {
+        match field {
+            SuggestField::Where => self.where_selected = index,
+            SuggestField::Order => self.order_selected = index,
+        }
+    }
+
+    fn close_suggestions(&mut self, field: SuggestField) {
+        match field {
+            SuggestField::Where => self.where_open = false,
+            SuggestField::Order => self.order_open = false,
+        }
+    }
+
+    fn pick_suggestion(
+        &mut self,
+        field: SuggestField,
+        column: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (state, value) = match field {
+            SuggestField::Where => (self.table_where.clone(), self.where_value.clone()),
+            SuggestField::Order => (self.table_order.clone(), self.order_value.clone()),
+        };
+        let word = last_word(&value);
+        let base = value.strip_suffix(&word).unwrap_or(&value).to_string();
+        match field {
+            SuggestField::Where => self.where_suppress_open = true,
+            SuggestField::Order => self.order_suppress_open = true,
+        }
+        state.update(cx, |state, cx| {
+            state.set_value(format!("{base}{column}"), window, cx)
+        });
+        match field {
+            SuggestField::Where => {
+                self.where_suppress_open = false;
+                self.where_open = false;
+            }
+            SuggestField::Order => {
+                self.order_suppress_open = false;
+                self.order_open = false;
+            }
+        }
+        cx.notify();
+    }
+
+    fn handle_suggestion_key(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let where_suggestions = if self.where_open {
+            self.suggestions_for(&self.where_value)
+        } else {
+            Vec::new()
+        };
+        let order_suggestions = if self.order_open {
+            self.suggestions_for(&self.order_value)
+        } else {
+            Vec::new()
+        };
+        let (field, suggestions) = if !where_suggestions.is_empty() {
+            (SuggestField::Where, where_suggestions)
+        } else if !order_suggestions.is_empty() {
+            (SuggestField::Order, order_suggestions)
+        } else {
+            return false;
+        };
+        let selected = self
+            .suggestion_selection(field)
+            .min(suggestions.len() - 1);
+        match key {
+            "up" => {
+                self.set_suggestion_selection(field, selected.saturating_sub(1));
+                cx.notify();
+                true
+            }
+            "down" => {
+                self.set_suggestion_selection(field, (selected + 1).min(suggestions.len() - 1));
+                cx.notify();
+                true
+            }
+            "enter" => {
+                let column = suggestions[selected].clone();
+                self.pick_suggestion(field, &column, window, cx);
+                true
+            }
+            "escape" => {
+                self.close_suggestions(field);
+                cx.notify();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn suggest_menu(
+        &self,
+        field: SuggestField,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui_kit::AnyElement> {
+        let (open, value, selected) = match field {
+            SuggestField::Where => (self.where_open, self.where_value.as_str(), self.where_selected),
+            SuggestField::Order => (self.order_open, self.order_value.as_str(), self.order_selected),
+        };
+        if !open {
+            return None;
+        }
+        let suggestions = self.suggestions_for(value);
+        if suggestions.is_empty() {
+            return None;
+        }
+        let selected = selected.min(suggestions.len() - 1);
+        let colors = cx.theme().colors;
+        let prefix = match field {
+            SuggestField::Where => "where",
+            SuggestField::Order => "order",
+        };
+
+        Some(
+            deferred(
+                v_flex()
+                    .absolute()
+                    .occlude()
+                    .top(px(28.))
+                    .left_0()
+                    .right_0()
+                    .p_1()
+                    .gap(px(1.))
+                    .rounded_md()
+                    .border_1()
+                    .border_color(colors.border)
+                    .bg(colors.background)
+                    .shadow_md()
+                    .children(suggestions.into_iter().enumerate().map(|(index, column)| {
+                        let insert = column.clone();
+                        h_flex()
+                            .id(SharedString::from(format!("{prefix}-{column}")))
+                            .h(px(26.))
+                            .px_2()
+                            .items_center()
+                            .rounded_md()
+                            .text_size(px(12.))
+                            .when(index == selected, |this| this.bg(colors.sidebar_accent))
+                            .hover(|style| style.bg(colors.sidebar_accent))
+                            .child(column)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, window, cx| {
+                                    this.pick_suggestion(field, &insert, window, cx);
+                                }),
+                            )
+                    })),
+            )
+            .into_any_element(),
+        )
+    }
+
+    fn filter_slot(
+        &self,
+        field: SuggestField,
+        label: &'static str,
+        color: Hsla,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let state = match field {
+            SuggestField::Where => &self.table_where,
+            SuggestField::Order => &self.table_order,
+        };
+        h_flex()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .child(Self::filter_field(state, label, color))
+            .when_some(self.suggest_menu(field, cx), |this, menu| this.child(menu))
     }
 
     /// WHERE / ORDER BY input above a table tab, plus copy and refresh.
@@ -2047,85 +2284,26 @@ impl Omdbx {
             .items_center()
             .border_b_1()
             .border_color(colors.border)
-            .child({
-                let word = self.where_word();
-                let suggestions: Vec<String> = if self.where_open && !word.is_empty() {
-                    self.columns
-                        .iter()
-                        .filter(|column| column.to_lowercase().starts_with(&word.to_lowercase()))
-                        .take(8)
-                        .cloned()
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-                h_flex()
-                    .relative()
-                    .flex_1()
-                    .min_w_0()
-                    .child(Self::filter_field(
-                        &self.table_where,
-                        "WHERE",
-                        gpui_kit::rgb(0x2F6BFF).into(),
-                    ))
-                    .when(!suggestions.is_empty(), |this| {
-                        this.child(deferred(
-                            v_flex()
-                                .absolute()
-                                .occlude()
-                                .top(px(28.))
-                                .left_0()
-                                .right_0()
-                                .p_1()
-                                .gap(px(1.))
-                                .rounded_md()
-                                .border_1()
-                                .border_color(colors.border)
-                                .bg(colors.background)
-                                .shadow_md()
-                                .children(suggestions.into_iter().map(|column| {
-                                    let insert = column.clone();
-                                    h_flex()
-                                        .id(SharedString::from(format!("where-{column}")))
-                                        .h(px(26.))
-                                        .px_2()
-                                        .items_center()
-                                        .rounded_md()
-                                        .text_size(px(12.))
-                                        .hover(|style| style.bg(colors.sidebar_accent))
-                                        .child(column)
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(move |this, _, window, cx| {
-                                                let value = this.where_value.clone();
-                                                let word = this.where_word();
-                                                let base = value
-                                                    .strip_suffix(&word)
-                                                    .unwrap_or(&value)
-                                                    .to_string();
-                                                this.where_suppress_open = true;
-                                                this.table_where.update(cx, |state, cx| {
-                                                    state.set_value(
-                                                        format!("{base}{insert}"),
-                                                        window,
-                                                        cx,
-                                                    )
-                                                });
-                                                this.where_suppress_open = false;
-                                                this.where_open = false;
-                                                cx.notify();
-                                            }),
-                                        )
-                                }))
-                                .into_any_element(),
-                        ))
-                    })
-            })
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                let key = event.keystroke.key.as_str();
+                if matches!(key, "up" | "down" | "enter" | "escape")
+                    && this.handle_suggestion_key(key, window, cx)
+                {
+                    cx.stop_propagation();
+                }
+            }))
+            .child(self.filter_slot(
+                SuggestField::Where,
+                "WHERE",
+                gpui_kit::rgb(0x2F6BFF).into(),
+                cx,
+            ))
             .child(divider())
-            .child(Self::filter_field(
-                &self.table_order,
+            .child(self.filter_slot(
+                SuggestField::Order,
                 "ORDER BY",
                 gpui_kit::rgb(0xE8722C).into(),
+                cx,
             ))
             .child(divider())
             .child(Self::icon_button(
