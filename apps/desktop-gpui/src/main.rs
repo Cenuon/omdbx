@@ -285,8 +285,19 @@ fn fetch_rows(
     database: &str,
     schema: &str,
     table: &str,
+    where_clause: &str,
+    order_clause: &str,
 ) -> Result<TableData, String> {
-    let sql = format!("SELECT * FROM {} LIMIT {ROW_LIMIT}", connection.quote(table));
+    let mut sql = format!("SELECT * FROM {}", connection.quote(table));
+    if !where_clause.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(where_clause);
+    }
+    if !order_clause.is_empty() {
+        sql.push_str(" ORDER BY ");
+        sql.push_str(order_clause);
+    }
+    sql.push_str(&format!(" LIMIT {ROW_LIMIT}"));
     run_sql(connection, database, schema, &sql)
 }
 
@@ -692,11 +703,15 @@ struct Omdbx {
     focus_handle: FocusHandle,
     tree_scroll: ScrollHandle,
     tree_row_count: std::cell::Cell<usize>,
+    table_where: Entity<InputState>,
+    table_order: Entity<InputState>,
 }
 
 impl Omdbx {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索连接或表"));
+        let table_where = cx.new(|cx| InputState::new(window, cx));
+        let table_order = cx.new(|cx| InputState::new(window, cx));
         cx.subscribe(&search, |this, state, event: &InputEvent, cx| match event {
             InputEvent::Change => {
                 this.filter = state.read(cx).value().to_string();
@@ -758,6 +773,8 @@ impl Omdbx {
             focus_handle: cx.focus_handle(),
             tree_scroll: ScrollHandle::new(),
             tree_row_count: std::cell::Cell::new(0),
+            table_where,
+            table_order,
         };
         this.check_for_update(cx);
         this
@@ -948,7 +965,15 @@ impl Omdbx {
             });
             self.active = Some(self.tabs.len() - 1);
         }
+        self.clear_table_filters(window, cx);
         self.load_active(window, cx);
+    }
+
+    fn clear_table_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.table_where
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        self.table_order
+            .update(cx, |state, cx| state.set_value("", window, cx));
     }
 
     fn load_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -964,7 +989,16 @@ impl Omdbx {
         };
         self.loading = true;
         cx.notify();
-        match fetch_rows(&connection, &tab.database, &tab.schema, &tab.table) {
+        let where_clause = self.table_where.read(cx).value().trim().to_string();
+        let order_clause = self.table_order.read(cx).value().trim().to_string();
+        match fetch_rows(
+            &connection,
+            &tab.database,
+            &tab.schema,
+            &tab.table,
+            &where_clause,
+            &order_clause,
+        ) {
             Ok(data) => {
                 let table_meta = fetch_columns(
                     &tab.connection_id,
@@ -1904,30 +1938,9 @@ impl Omdbx {
             )
     }
 
-    fn filter_key(icon: AssetIcon, colors: gpui_kit::component::ThemeColor) -> impl IntoElement {
-        div()
-            .size(px(26.))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_md()
-            .border_1()
-            .border_color(colors.border)
-            .bg(colors.background)
-            .child(
-                Icon::new(icon)
-                    .with_size(px(14.))
-                    .text_color(colors.foreground),
-            )
-    }
-
-    /// WHERE / ORDER BY toolbar above a table tab, plus copy and refresh.
+    /// WHERE / ORDER BY input above a table tab, plus copy and refresh.
     fn table_filter_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
-        let muted = colors.muted_foreground;
-        let blue = gpui_kit::rgb(0x2F6BFF);
-        let orange = gpui_kit::rgb(0xE8722C);
         let divider = || {
             div()
                 .w(px(1.))
@@ -1944,65 +1957,17 @@ impl Omdbx {
             .items_center()
             .border_b_1()
             .border_color(colors.border)
-            .child(
-                h_flex()
-                    .id("table-where")
-                    .flex_1()
-                    .min_w_0()
-                    .h(px(32.))
-                    .px_2()
-                    .gap_2()
-                    .items_center()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .hover(|style| style.bg(colors.sidebar_accent))
-                    .child(Self::filter_key(AssetIcon::Funnel, colors))
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(blue)
-                            .child("WHERE"),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        Icon::new(IconName::ChevronDown)
-                            .with_size(px(14.))
-                            .text_color(muted),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.show_notice("筛选未完成", cx))),
-            )
+            .child(Self::filter_field(
+                &self.table_where,
+                "WHERE",
+                gpui_kit::rgb(0x2F6BFF).into(),
+            ))
             .child(divider())
-            .child(
-                h_flex()
-                    .id("table-order")
-                    .flex_1()
-                    .min_w_0()
-                    .h(px(32.))
-                    .px_2()
-                    .gap_2()
-                    .items_center()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .hover(|style| style.bg(colors.sidebar_accent))
-                    .child(Self::filter_key(AssetIcon::ArrowUpDown, colors))
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(orange)
-                            .child("ORDER BY"),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        Icon::new(IconName::ChevronDown)
-                            .with_size(px(14.))
-                            .text_color(muted),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_notice("排序未完成", cx)
-                    })),
-            )
+            .child(Self::filter_field(
+                &self.table_order,
+                "ORDER BY",
+                gpui_kit::rgb(0xE8722C).into(),
+            ))
             .child(divider())
             .child(Self::icon_button(
                 "table-copy",
@@ -2038,6 +2003,34 @@ impl Omdbx {
                     )
                     .child(div().text_size(px(13.)).child("刷新"))
                     .on_click(cx.listener(|this, _, window, cx| this.load_active(window, cx))),
+            )
+    }
+
+    fn filter_field(
+        state: &Entity<InputState>,
+        label: &'static str,
+        color: Hsla,
+    ) -> impl IntoElement {
+        h_flex()
+            .flex_1()
+            .min_w_0()
+            .h(px(32.))
+            .px_2()
+            .items_center()
+            .rounded_md()
+            .bg(gpui_kit::rgb(0xECECEE))
+            .child(
+                Input::new(state)
+                    .appearance(false)
+                    .bordered(false)
+                    .text_size(px(13.))
+                    .prefix(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(color)
+                            .child(label),
+                    ),
             )
     }
 
@@ -2554,6 +2547,7 @@ impl Omdbx {
                     CloseTarget::Table(index) => {
                         this.show_query = false;
                         this.active = Some(index);
+                        this.clear_table_filters(window, cx);
                         this.load_active(window, cx);
                     }
                     CloseTarget::Query(index) => {
