@@ -15,7 +15,7 @@ use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputSt
 use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::Selectable;
-use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableState};
+use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableEvent, TableState};
 use gpui_kit::component::{
     h_flex, v_flex, ActiveTheme, Icon, IconName, Sizable, Theme, ThemeMode, TitleBar,
 };
@@ -208,6 +208,8 @@ struct ColumnMeta {
     data_type: String,
     #[serde(default)]
     comment: String,
+    #[serde(default)]
+    is_primary_key: bool,
 }
 
 fn fetch_columns(
@@ -634,6 +636,62 @@ fn sql_literal(value: &str, data_type: &str) -> String {
     }
 }
 
+fn edit_sql_literal(value: &str, data_type: &str, db_type: &str) -> String {
+    if value == "NULL" {
+        return "NULL".to_string();
+    }
+    if is_numeric_type(data_type) && value.parse::<f64>().is_ok() {
+        return value.to_string();
+    }
+    let mysql = matches!(
+        db_type,
+        "mysql" | "mariadb" | "tidb" | "oceanbase" | "goldendb" | "databend"
+    );
+    let escaped = if mysql {
+        value.replace('\\', "\\\\").replace('\'', "''")
+    } else {
+        value.replace('\'', "''")
+    };
+    format!("'{escaped}'")
+}
+
+fn update_cell_sql(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    column_type: &str,
+    value: &str,
+    keys: &[(String, String, String)],
+) -> Result<String, String> {
+    if keys.is_empty() {
+        return Err("这张表没有主键，暂不支持编辑".to_string());
+    }
+    let assignment = format!(
+        "{} = {}",
+        connection.quote(column),
+        edit_sql_literal(value, column_type, &connection.db_type)
+    );
+    let predicates = keys
+        .iter()
+        .map(|(name, data_type, original)| {
+            if original == "NULL" {
+                format!("{} IS NULL", connection.quote(name))
+            } else {
+                format!(
+                    "{} = {}",
+                    connection.quote(name),
+                    edit_sql_literal(original, data_type, &connection.db_type)
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    Ok(format!(
+        "UPDATE {} SET {assignment} WHERE {predicates}",
+        connection.quote(table)
+    ))
+}
+
 fn export_sql_insert(data: &TableData, table: &str, connection: &Connection) -> String {
     let columns = data
         .columns
@@ -756,12 +814,30 @@ fn encode(value: &str) -> String {
 
 /// Backing store handed to gpui-kit"s DataTable: virtual scrolling, resizable
 /// columns, sorting, row/cell selection all come from the component.
+#[derive(Clone)]
+struct EditingCell {
+    /// Row index in the loaded page, and data-column index (without `#`).
+    row: usize,
+    col: usize,
+    input: Entity<InputState>,
+    connection: Connection,
+    database: String,
+    schema: String,
+    table: String,
+    column: String,
+    column_type: String,
+    original: String,
+    /// Primary-key columns and the values that identify this row.
+    keys: Vec<(String, String, String)>,
+}
+
 struct GridDelegate {
     columns: Vec<String>,
     rows: Vec<Vec<String>>,
     meta: Vec<ColumnMeta>,
     show_comments: bool,
     row_offset: usize,
+    editing: Option<EditingCell>,
 }
 
 impl TableDelegate for GridDelegate {
@@ -933,6 +1009,31 @@ impl TableDelegate for GridDelegate {
                 .font_features(tabular())
                 .child(format!("{}", self.row_offset + row + 1))
                 .into_any_element();
+        }
+        if let Some(editing) = &self.editing {
+            if editing.row == row && editing.col == col - 1 {
+                let input = editing.input.clone();
+                return div()
+                    .h_full()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .rounded(px(2.))
+                    .border_1()
+                    .border_color(gpui_kit::rgb(0x2F6BFF))
+                    .bg(cx.theme().colors.background)
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        Input::new(&input)
+                            .appearance(false)
+                            .bordered(false)
+                            .w_full()
+                            .with_size(gpui_kit::component::Size::XSmall)
+                            .text_size(px(13.))
+                            .font_family(cx.theme().mono_font_family.clone()),
+                    )
+                    .into_any_element();
+            }
         }
         let text = self
             .rows
@@ -1529,8 +1630,26 @@ impl Omdbx {
                     meta,
                     show_comments: self.show_comments,
                     row_offset,
+                    editing: None,
                 };
-                self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
+                self.grid = Some(cx.new(|cx| {
+                    TableState::new(delegate, window, cx)
+                        .col_resizable(false)
+                        .cell_selectable(true)
+                        .row_header(false)
+                }));
+                if let Some(grid) = self.grid.clone() {
+                    cx.subscribe_in(
+                        &grid,
+                        window,
+                        |this, grid, event: &TableEvent, window, cx| {
+                            if let TableEvent::DoubleClickedCell(row, col) = event {
+                                this.begin_cell_edit(*row, *col, grid, window, cx);
+                            }
+                        },
+                    )
+                    .detach();
+                }
                 self.columns = data.columns;
                 self.rows = data.rows;
                 self.table_has_more = data.has_more;
@@ -1548,6 +1667,201 @@ impl Omdbx {
         cx.notify();
     }
 
+
+    fn begin_cell_edit(
+        &mut self,
+        row: usize,
+        col: usize,
+        grid: &Entity<TableState<GridDelegate>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if col == 0 || self.show_query {
+            return;
+        }
+        let col = col - 1;
+        self.commit_editing(grid, cx);
+        let Some(tab) = self.active.and_then(|index| self.tabs.get(index)).cloned() else {
+            return;
+        };
+        let Some(connection) = self
+            .connections
+            .iter()
+            .find(|item| item.id == tab.connection_id)
+            .cloned()
+        else {
+            return;
+        };
+        let Some(original) = self
+            .rows
+            .get(row)
+            .and_then(|cells| cells.get(col))
+            .cloned()
+        else {
+            return;
+        };
+        let Some(column) = self.columns.get(col).cloned() else {
+            return;
+        };
+        let column_type = self
+            .column_meta
+            .get(col)
+            .map(|meta| meta.data_type.clone())
+            .unwrap_or_default();
+        let primary_count = self
+            .column_meta
+            .iter()
+            .filter(|meta| meta.is_primary_key)
+            .count();
+        let mut keys = Vec::with_capacity(primary_count);
+        for meta in self.column_meta.iter().filter(|meta| meta.is_primary_key) {
+            let Some(index) = self.columns.iter().position(|name| name == &meta.name) else {
+                continue;
+            };
+            let Some(value) = self
+                .rows
+                .get(row)
+                .and_then(|cells| cells.get(index))
+                .cloned()
+            else {
+                continue;
+            };
+            keys.push((meta.name.clone(), meta.data_type.clone(), value));
+        }
+        if primary_count == 0 || keys.len() != primary_count {
+            self.show_notice("这张表没有主键，暂不支持编辑", cx);
+            return;
+        }
+
+        let input = cx.new(|cx| InputState::new(window, cx));
+        input.update(cx, |state, cx| {
+            state.set_value(original.clone(), window, cx);
+            state.select_all(window, cx);
+        });
+        grid.update(cx, |table, cx| {
+            table.delegate_mut().editing = Some(EditingCell {
+                row,
+                col,
+                input: input.clone(),
+                connection,
+                database: tab.database.clone(),
+                schema: tab.schema.clone(),
+                table: tab.table.clone(),
+                column,
+                column_type,
+                original,
+                keys,
+            });
+            cx.notify();
+        });
+        // The click that opened the editor continues to the table after this
+        // handler, so focus the input once that event turn has finished.
+        let focused = input.clone();
+        window.defer(cx, move |window, cx| {
+            focused.update(cx, |state, cx| state.focus(window, cx));
+        });
+        let grid = grid.clone();
+        cx.subscribe_in(&input, window, move |this, input, event: &InputEvent, _, cx| {
+            if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                this.finish_edit(&grid, input, cx);
+            }
+        })
+        .detach();
+    }
+
+    fn commit_editing(&mut self, grid: &Entity<TableState<GridDelegate>>, cx: &mut Context<Self>) {
+        let Some(input) = grid
+            .read(cx)
+            .delegate()
+            .editing
+            .as_ref()
+            .map(|edit| edit.input.clone())
+        else {
+            return;
+        };
+        self.finish_edit(grid, &input, cx);
+    }
+
+    fn finish_edit(
+        &mut self,
+        grid: &Entity<TableState<GridDelegate>>,
+        input: &Entity<InputState>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(edit) = ({
+            let delegate = grid.read(cx).delegate();
+            delegate
+                .editing
+                .as_ref()
+                .filter(|edit| edit.input.entity_id() == input.entity_id())
+                .cloned()
+        }) else {
+            return;
+        };
+        let value = input.read(cx).value().to_string();
+        grid.update(cx, |table, cx| {
+            table.delegate_mut().editing = None;
+            cx.notify();
+        });
+        if value == edit.original {
+            return;
+        }
+        let sql = match update_cell_sql(
+            &edit.connection,
+            &edit.table,
+            &edit.column,
+            &edit.column_type,
+            &value,
+            &edit.keys,
+        ) {
+            Ok(sql) => sql,
+            Err(message) => {
+                self.show_notice(&message, cx);
+                return;
+            }
+        };
+        let connection = edit.connection.clone();
+        let database = edit.database.clone();
+        let schema = edit.schema.clone();
+        let task = cx.background_executor().spawn(async move {
+            run_sql(&connection, &database, &schema, &sql, 1)
+        });
+        let grid = grid.clone();
+        cx.spawn(async move |weak, cx| {
+            let result = task.await;
+            let _ = weak.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    let same_grid = this
+                        .grid
+                        .as_ref()
+                        .is_some_and(|current| current.entity_id() == grid.entity_id());
+                    if same_grid {
+                        if let Some(cell) = this
+                            .rows
+                            .get_mut(edit.row)
+                            .and_then(|cells| cells.get_mut(edit.col))
+                        {
+                            *cell = value.clone();
+                        }
+                        grid.update(cx, |table, cx| {
+                            if let Some(cell) = table
+                                .delegate_mut()
+                                .rows
+                                .get_mut(edit.row)
+                                .and_then(|cells| cells.get_mut(edit.col))
+                            {
+                                *cell = value.clone();
+                            }
+                            cx.notify();
+                        });
+                    }
+                    this.show_notice("已更新", cx);
+                }
+                Err(error) => this.show_notice(&format!("更新失败: {error}"), cx),
+            });
+        })
+        .detach();
+    }
 
     fn check_for_update(&self, cx: &mut Context<Self>) {
         let task = cx.background_executor().spawn(async { fetch_update() });
@@ -1912,6 +2226,7 @@ impl Omdbx {
                     meta,
                     show_comments: self.show_comments,
                     row_offset: 0,
+                    editing: None,
                 };
                 self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
                 self.columns = data.columns;
@@ -4139,6 +4454,24 @@ mod export_tests {
         let sql = export_sql_insert(&data(), "people", &connection());
         assert!(sql.contains("INSERT INTO `people` (`id`, `name`, `note`) VALUES (1, 'Ann, \"A\"', NULL);"));
         assert!(sql.contains("'line\nnext'"));
+    }
+
+    #[test]
+    fn update_uses_primary_keys_and_escapes_strings() {
+        let keys = vec![("id".to_string(), "int".to_string(), "1".to_string())];
+        let sql = update_cell_sql(&connection(), "people", "name", "varchar", "O'Brien", &keys).unwrap();
+        assert_eq!(
+            sql,
+            "UPDATE `people` SET `name` = 'O''Brien' WHERE `id` = 1"
+        );
+    }
+
+    #[test]
+    fn update_matches_a_null_key_and_rejects_keyless_tables() {
+        let keys = vec![("id".to_string(), "int".to_string(), "NULL".to_string())];
+        let sql = update_cell_sql(&connection(), "people", "name", "varchar", "x", &keys).unwrap();
+        assert!(sql.ends_with("WHERE `id` IS NULL"));
+        assert!(update_cell_sql(&connection(), "people", "name", "varchar", "x", &[]).is_err());
     }
 
     #[test]
