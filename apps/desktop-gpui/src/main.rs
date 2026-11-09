@@ -453,18 +453,32 @@ impl TableDelegate for GridDelegate {
                 .paddings(padding);
         }
         let name = self.columns.get(index - 1).cloned().unwrap_or_default();
-        let width = self
+        let mut width = self
             .meta
             .get(index - 1)
             .map(|meta| {
                 let text = (meta.name.chars().count() as f32 * 8.)
                     .max(meta.data_type.chars().count() as f32 * 7.)
                     .max(meta.comment.chars().count() as f32 * 11.);
-                (text + 28.).clamp(120., 260.)
+                text + 28.
             })
             .unwrap_or(140.);
+        if let Some(meta) = self.meta.get(index - 1) {
+            if is_temporal_type(&meta.data_type) {
+                // Dates and timestamps must read in full, so size the column
+                // from its longest value instead of the column name.
+                let longest = self
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.get(index - 1))
+                    .map(|value| value.chars().count())
+                    .max()
+                    .unwrap_or(0);
+                width = width.max(longest as f32 * 8. + 28.).max(160.);
+            }
+        }
         Column::new(name.clone(), name)
-            .width(px(width))
+            .width(px(width.clamp(120., 300.)))
             .paddings(padding)
     }
 
@@ -499,6 +513,7 @@ impl TableDelegate for GridDelegate {
             .w_full()
             .flex()
             .items_center()
+            .font_family(cx.theme().mono_font_family.clone())
             .when(col_ix > 1, |this| {
                 this.child(
                     div()
@@ -561,6 +576,7 @@ impl TableDelegate for GridDelegate {
                 .justify_end()
                 .text_size(px(11.))
                 .text_color(muted)
+                .font_family(cx.theme().mono_font_family.clone())
                 .font_features(tabular())
                 .child(format!("{}", row + 1))
                 .into_any_element();
@@ -582,6 +598,7 @@ impl TableDelegate for GridDelegate {
             .w_full()
             .flex()
             .items_center()
+            .font_family(cx.theme().mono_font_family.clone())
             .when(col > 1, |this| {
                 this.child(
                     div()
@@ -627,6 +644,11 @@ fn data_type_color(data_type: &str, muted: Hsla) -> Hsla {
     } else {
         muted
     }
+}
+
+fn is_temporal_type(data_type: &str) -> bool {
+    let ty = data_type.to_ascii_lowercase();
+    ["date", "time", "year"].iter().any(|needle| ty.contains(needle))
 }
 
 fn is_numeric_type(data_type: &str) -> bool {
