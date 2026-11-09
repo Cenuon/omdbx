@@ -2558,6 +2558,7 @@ impl Omdbx {
                             .text_size(px(13.))
                             .text_color(gpui_kit::transparent_black())
                             .font_family(mono)
+                            .line_height(px(16.))
                             .py(px(3.)),
                     ),
             )
