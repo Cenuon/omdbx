@@ -1014,13 +1014,13 @@ impl TableDelegate for GridDelegate {
             if editing.row == row && editing.col == col - 1 {
                 let input = editing.input.clone();
                 return div()
-                    .h_full()
-                    .w_full()
+                    .absolute()
+                    .inset_0()
                     .flex()
                     .items_center()
                     .rounded(px(2.))
                     .border_1()
-                    .border_color(gpui_kit::rgb(0x2F6BFF))
+                    .border_color(cx.theme().colors.foreground)
                     .bg(cx.theme().colors.background)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
