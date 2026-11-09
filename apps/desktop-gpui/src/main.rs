@@ -1804,17 +1804,26 @@ impl Omdbx {
                                 .top_0()
                                 .left_0()
                                 .right_0()
-                                .bg(colors.sidebar)
-                                .border_b_1()
-                                .border_color(colors.border.opacity(0.4))
-                                .shadow(vec![gpui_kit::BoxShadow::new(
-                                    px(0.),
-                                    px(8.),
-                                    gpui_kit::hsla(0., 0., 0., 0.08),
+                                .child(
+                                    v_flex()
+                                        .bg(colors.sidebar)
+                                        .border_b_1()
+                                        .border_color(colors.border.opacity(0.4))
+                                        .children(sticky),
                                 )
-                                .blur_radius(px(6.))
-                                .spread_radius(px(-6.))])
-                                .children(sticky),
+                                .child(
+                                    div().h(px(6.)).w_full().bg(gpui_kit::linear_gradient(
+                                        180.,
+                                        gpui_kit::linear_color_stop(
+                                            gpui_kit::hsla(0., 0., 0., 0.06),
+                                            0.,
+                                        ),
+                                        gpui_kit::linear_color_stop(
+                                            gpui_kit::hsla(0., 0., 0., 0.),
+                                            1.,
+                                        ),
+                                    )),
+                                ),
                         )
                     })
             })
