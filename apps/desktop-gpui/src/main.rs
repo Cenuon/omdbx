@@ -1801,7 +1801,8 @@ impl Omdbx {
                                 .right_0()
                                 .bg(colors.sidebar)
                                 .border_b_1()
-                                .border_color(colors.border)
+                                .border_color(colors.border.opacity(0.4))
+                                .shadow_sm()
                                 .children(sticky),
                         )
                     })
