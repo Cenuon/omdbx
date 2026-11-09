@@ -1624,7 +1624,7 @@ impl Omdbx {
         entries: &[TreeEntry],
         cx: &mut Context<Self>,
     ) -> Vec<gpui_kit::AnyElement> {
-        if !self.filter.trim().is_empty() {
+        if !self.filter.trim().is_empty() || self.tree_scroll.max_offset().y <= px(0.) {
             return Vec::new();
         }
         // Nothing is scrolled past the first row: keep the list unadorned.
