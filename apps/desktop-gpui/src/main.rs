@@ -792,14 +792,34 @@ impl Omdbx {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索连接或表"));
         let table_where = cx.new(|cx| {
-            EditorState::new(window, cx)
+            let mut state = EditorState::new(window, cx)
                 .language("sql")
-                .line_number(false)
+                .line_number(false);
+            state.set_editor_paddings(gpui_kit::Edges {
+                top: px(0.),
+                bottom: px(0.),
+                left: px(0.),
+                right: px(0.),
+            });
+            state.set_scrollbar_renderer(Some(std::rc::Rc::new(|_, _, _| {
+                div().into_any_element()
+            })));
+            state
         });
         let table_order = cx.new(|cx| {
-            EditorState::new(window, cx)
+            let mut state = EditorState::new(window, cx)
                 .language("sql")
-                .line_number(false)
+                .line_number(false);
+            state.set_editor_paddings(gpui_kit::Edges {
+                top: px(0.),
+                bottom: px(0.),
+                left: px(0.),
+                right: px(0.),
+            });
+            state.set_scrollbar_renderer(Some(std::rc::Rc::new(|_, _, _| {
+                div().into_any_element()
+            })));
+            state
         });
         cx.subscribe(&table_where, |this, state, event: &InputEvent, cx| match event {
             InputEvent::Change => {
@@ -2497,7 +2517,13 @@ impl Omdbx {
                     .flex_1()
                     .min_w_0()
                     .h(px(24.))
-                    .child(Editor::new(state).appearance(false).bordered(false).h(px(24.))),
+                    .child(
+                        Editor::new(state)
+                            .appearance(false)
+                            .bordered(false)
+                            .with_size(gpui_kit::component::Size::XSmall)
+                            .h(px(24.)),
+                    ),
             )
     }
 
