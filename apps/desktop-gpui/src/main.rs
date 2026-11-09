@@ -1904,6 +1904,143 @@ impl Omdbx {
             )
     }
 
+    fn filter_key(icon: AssetIcon, colors: gpui_kit::component::ThemeColor) -> impl IntoElement {
+        div()
+            .size(px(26.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors.background)
+            .child(
+                Icon::new(icon)
+                    .with_size(px(14.))
+                    .text_color(colors.foreground),
+            )
+    }
+
+    /// WHERE / ORDER BY toolbar above a table tab, plus copy and refresh.
+    fn table_filter_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors;
+        let muted = colors.muted_foreground;
+        let blue = gpui_kit::rgb(0x2F6BFF);
+        let orange = gpui_kit::rgb(0xE8722C);
+        let divider = || {
+            div()
+                .w(px(1.))
+                .h(px(20.))
+                .flex_none()
+                .bg(colors.border)
+        };
+
+        h_flex()
+            .h(px(44.))
+            .flex_none()
+            .px_3()
+            .gap_3()
+            .items_center()
+            .border_b_1()
+            .border_color(colors.border)
+            .child(
+                h_flex()
+                    .id("table-where")
+                    .flex_1()
+                    .min_w_0()
+                    .h(px(32.))
+                    .px_2()
+                    .gap_2()
+                    .items_center()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(|style| style.bg(colors.sidebar_accent))
+                    .child(Self::filter_key(AssetIcon::Funnel, colors))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(blue)
+                            .child("WHERE"),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Icon::new(IconName::ChevronDown)
+                            .with_size(px(14.))
+                            .text_color(muted),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.show_notice("筛选未完成", cx))),
+            )
+            .child(divider())
+            .child(
+                h_flex()
+                    .id("table-order")
+                    .flex_1()
+                    .min_w_0()
+                    .h(px(32.))
+                    .px_2()
+                    .gap_2()
+                    .items_center()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(|style| style.bg(colors.sidebar_accent))
+                    .child(Self::filter_key(AssetIcon::ArrowUpDown, colors))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(orange)
+                            .child("ORDER BY"),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Icon::new(IconName::ChevronDown)
+                            .with_size(px(14.))
+                            .text_color(muted),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.show_notice("排序未完成", cx)
+                    })),
+            )
+            .child(divider())
+            .child(Self::icon_button(
+                "table-copy",
+                Icon::new(AssetIcon::Copy)
+                    .with_size(px(16.))
+                    .text_color(colors.foreground)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, _, cx| {
+                    let mut text = this.columns.join("\t");
+                    for row in &this.rows {
+                        text.push('\n');
+                        text.push_str(&row.join("\t"));
+                    }
+                    cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(text));
+                    this.show_notice("已复制", cx);
+                }),
+            ))
+            .child(
+                h_flex()
+                    .id("table-refresh")
+                    .h(px(28.))
+                    .px_2()
+                    .gap_1()
+                    .items_center()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(|style| style.bg(colors.sidebar_accent))
+                    .child(
+                        Icon::new(AssetIcon::RotateCw)
+                            .with_size(px(16.))
+                            .text_color(colors.foreground),
+                    )
+                    .child(div().text_size(px(13.)).child("刷新"))
+                    .on_click(cx.listener(|this, _, window, cx| this.load_active(window, cx))),
+            )
+    }
+
     /// Table with an outer frame, a small gap, and a rounded content area.
     fn table_frame(
         &self,
@@ -2295,62 +2432,15 @@ impl Omdbx {
 
     fn main_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
-        let muted = colors.muted_foreground;
         let tab = self.active.and_then(|index| self.tabs.get(index)).cloned();
-
-        let title = if self.show_query {
-            "查询".to_string()
-        } else if let Some(tab) = &tab {
-            format!(
-                "{} · {}",
-                self.connections
-                    .iter()
-                    .find(|item| item.id == tab.connection_id)
-                    .map(|item| item.name.clone())
-                    .unwrap_or_default(),
-                tab.database
-            )
-        } else {
-            "选择一张表".to_string()
-        };
-        let meta = if self.show_query {
-            self.query_target()
-                .map(|(connection, database, _)| format!("{} · {}", connection.name, database))
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
-        let status = if self.loading {
-            "加载中…".to_string()
-        } else if self.show_query || tab.is_some() {
-            format!("{} 行", self.rows.len())
-        } else {
-            String::new()
-        };
 
         v_flex()
             .flex_1()
             .h_full()
             .min_w_0()
-            // context bar for table tabs; the query page has its own toolbar
+            // filter bar for table tabs; the query page has its own toolbar
             .when(!self.show_query, |this| {
-                this.child(
-                    h_flex()
-                        .h(px(44.))
-                        .flex_none()
-                        .px_4()
-                        .gap_3()
-                        .items_center()
-                        .child(
-                            div()
-                                .text_size(px(15.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(title),
-                        )
-                        .child(div().text_size(px(12.)).text_color(muted).child(meta))
-                        .child(div().flex_1())
-                        .child(div().text_size(px(12.)).text_color(muted).child(status)),
-                )
+                this.child(self.table_filter_bar(cx))
             })
             // body
             .child(if self.show_query {
