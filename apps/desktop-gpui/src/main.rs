@@ -691,6 +691,7 @@ struct Omdbx {
     search_open: bool,
     focus_handle: FocusHandle,
     tree_scroll: ScrollHandle,
+    tree_row_count: std::cell::Cell<usize>,
 }
 
 impl Omdbx {
@@ -756,6 +757,7 @@ impl Omdbx {
             search_open: false,
             focus_handle: cx.focus_handle(),
             tree_scroll: ScrollHandle::new(),
+            tree_row_count: std::cell::Cell::new(0),
         };
         this.check_for_update(cx);
         this
@@ -1781,6 +1783,19 @@ impl Omdbx {
             )
             .child({
                 let (tree_rows, tree_entries) = self.tree(cx);
+                if self.tree_row_count.get() != tree_rows.len() {
+                    self.tree_row_count.set(tree_rows.len());
+                    // Scroll metrics come from the previous frame's prepaint;
+                    // render once more after the new rows settle so the sticky
+                    // and bottom fade appear with the expand/collapse.
+                    cx.spawn(async move |weak, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(16))
+                            .await;
+                        let _ = weak.update(cx, |_, cx| cx.notify());
+                    })
+                    .detach();
+                }
                 let sticky = self.sticky_rows(&tree_entries, cx);
                 let max_offset = self.tree_scroll.max_offset().y;
                 let at_bottom = -self.tree_scroll.offset().y >= max_offset - px(1.);
