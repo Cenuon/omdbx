@@ -2207,9 +2207,14 @@ impl Omdbx {
             SuggestField::Where => self.where_suppress_open = true,
             SuggestField::Order => self.order_suppress_open = true,
         }
-        state.update(cx, |state, cx| {
-            state.set_value(format!("{base}{column}"), window, cx)
-        });
+        let completed = format!("{base}{column}");
+        state.update(cx, |state, cx| state.set_value(completed.clone(), window, cx));
+        // set_value does not emit Change for every input mode; keep the
+        // painted layer in step with the real value.
+        match field {
+            SuggestField::Where => self.where_value = completed,
+            SuggestField::Order => self.order_value = completed,
+        }
         match field {
             SuggestField::Where => {
                 self.where_suppress_open = false;
@@ -2552,7 +2557,8 @@ impl Omdbx {
                             .with_size(gpui_kit::component::Size::XSmall)
                             .text_size(px(13.))
                             .text_color(gpui_kit::transparent_black())
-                            .font_family(mono),
+                            .font_family(mono)
+                            .py(px(3.)),
                     ),
             )
     }
