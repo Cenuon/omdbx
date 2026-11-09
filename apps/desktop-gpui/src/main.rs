@@ -12,7 +12,7 @@ use rust_xlsxwriter::Workbook;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState, Enter, IndentInline, MoveDown, MoveUp};
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::Selectable;
 use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableState};
@@ -1980,6 +1980,106 @@ impl Omdbx {
         }
         cx.notify();
     }
+
+    fn close_others(&mut self, target: CloseTarget, window: &mut Window, cx: &mut Context<Self>) {
+        match target {
+            CloseTarget::Table(index) => {
+                if index >= self.tabs.len() {
+                    return;
+                }
+                let tab = self.tabs[index].clone();
+                let was_active = !self.show_query && self.active == Some(index);
+                self.tabs = vec![tab];
+                self.queries.clear();
+                self.active = Some(0);
+                self.active_query = None;
+                self.show_query = false;
+                if !was_active {
+                    self.clear_table_filters(window, cx);
+                }
+                self.load_active(window, cx);
+            }
+            CloseTarget::Query(index) => {
+                if index >= self.queries.len() {
+                    return;
+                }
+                let query = self.queries[index].clone();
+                self.queries = vec![query];
+                self.tabs.clear();
+                self.active = None;
+                self.active_query = Some(0);
+                self.show_query = true;
+                self.grid = None;
+                self.columns.clear();
+                self.rows.clear();
+                self.error = None;
+                cx.notify();
+            }
+        }
+    }
+
+    fn close_right(&mut self, target: CloseTarget, window: &mut Window, cx: &mut Context<Self>) {
+        match target {
+            CloseTarget::Table(index) => {
+                if index >= self.tabs.len() {
+                    return;
+                }
+                let active_table = if self.show_query { None } else { self.active };
+                self.tabs.truncate(index + 1);
+                self.queries.clear();
+                self.active_query = None;
+                if self.show_query || active_table.map_or(true, |active| active > index) {
+                    self.show_query = false;
+                    self.active = Some(index);
+                    self.load_active(window, cx);
+                } else {
+                    cx.notify();
+                }
+            }
+            CloseTarget::Query(index) => {
+                if index >= self.queries.len() {
+                    return;
+                }
+                self.queries.truncate(index + 1);
+                if self.active_query.map_or(false, |active| active > index) {
+                    self.active_query = Some(index);
+                }
+                if self.show_query && self.active_query.is_none() {
+                    self.active_query = Some(index);
+                }
+                cx.notify();
+            }
+        }
+    }
+
+    fn close_all_tabs(&mut self, cx: &mut Context<Self>) {
+        self.tabs.clear();
+        self.queries.clear();
+        self.active = None;
+        self.active_query = None;
+        self.show_query = false;
+        self.grid = None;
+        self.columns.clear();
+        self.rows.clear();
+        self.error = None;
+        cx.notify();
+    }
+
+    fn reveal_in_tree(&mut self, target: CloseTarget, window: &mut Window, cx: &mut Context<Self>) {
+        let table = match target {
+            CloseTarget::Table(index) => self.tabs.get(index).map(|tab| tab.table.clone()),
+            CloseTarget::Query(_) => None,
+        };
+        let Some(table) = table else {
+            self.show_notice("查询标签不在导航窗格中", cx);
+            return;
+        };
+        self.search_open = true;
+        self.filter = table.clone();
+        self.search
+            .update(cx, |state, cx| state.set_value(table, window, cx));
+        cx.notify();
+    }
 }
 
 macro_rules! db_icon {
@@ -3615,7 +3715,8 @@ impl Omdbx {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let muted = colors.muted_foreground;
-        let chip = h_flex()
+        let weak = cx.entity().downgrade();
+        let mut chip = h_flex()
             .id(SharedString::from(id.clone()))
             .h(px(32.))
             .px_2()
@@ -3637,52 +3738,114 @@ impl Omdbx {
             .child(Icon::new(icon).with_size(px(16.)))
             .child(div().max_w(px(180.)).truncate().child(title));
         match close {
-            Some(target) => chip
-                .child(
-                    div()
-                        .id(SharedString::from(format!("close-{id}")))
-                        .size(px(18.))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(4.))
-                        .text_color(muted)
-                        .hover(|style| {
-                            style
-                                .bg(colors.secondary_active)
-                                .text_color(colors.foreground)
-                        })
-                        .child(Icon::new(AssetIcon::X).with_size(px(14.)))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            match target {
-                                CloseTarget::Table(index) => this.close_tab(index, window, cx),
-                                CloseTarget::Query(index) => this.close_query(index, window, cx),
-                            }
-                        })),
-                )
-                .on_click(cx.listener(move |this, _, window, cx| match target {
-                    CloseTarget::Table(index) => {
-                        this.show_query = false;
-                        this.active = Some(index);
-                        this.clear_table_filters(window, cx);
-                        this.load_active(window, cx);
-                    }
-                    CloseTarget::Query(index) => {
-                        this.show_query = true;
-                        this.active_query = Some(index);
-                        cx.notify();
-                    }
-                }))
-                .into_any_element(),
-            None => chip
-                .on_click(cx.listener(|this, _, _, cx| {
+            Some(target) => {
+                chip = chip
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("close-{id}")))
+                            .size(px(18.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(4.))
+                            .text_color(muted)
+                            .hover(|style| {
+                                style
+                                    .bg(colors.secondary_active)
+                                    .text_color(colors.foreground)
+                            })
+                            .child(Icon::new(AssetIcon::X).with_size(px(14.)))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                match target {
+                                    CloseTarget::Table(index) => this.close_tab(index, window, cx),
+                                    CloseTarget::Query(index) => this.close_query(index, window, cx),
+                                }
+                            })),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| match target {
+                        CloseTarget::Table(index) => {
+                            this.show_query = false;
+                            this.active = Some(index);
+                            this.clear_table_filters(window, cx);
+                            this.load_active(window, cx);
+                        }
+                        CloseTarget::Query(index) => {
+                            this.show_query = true;
+                            this.active_query = Some(index);
+                            cx.notify();
+                        }
+                    }));
+            }
+            None => {
+                chip = chip.on_click(cx.listener(|this, _, _, cx| {
                     this.show_query = true;
                     cx.notify();
-                }))
-                .into_any_element(),
+                }));
+            }
         }
+        chip.context_menu(move |menu, _, _| {
+            let mut menu = menu.min_w(px(230.));
+            if let Some(target) = close {
+                let weak_close = weak.clone();
+                menu = menu.item(PopupMenuItem::new("关闭").on_click(move |_, window, cx| {
+                    let _ = weak_close.update(cx, |this, cx| match target {
+                        CloseTarget::Table(index) => this.close_tab(index, window, cx),
+                        CloseTarget::Query(index) => this.close_query(index, window, cx),
+                    });
+                }));
+                let weak_others = weak.clone();
+                menu = menu.item(
+                    PopupMenuItem::new("关闭其他选项卡").on_click(move |_, window, cx| {
+                        let _ = weak_others.update(cx, |this, cx| {
+                            this.close_others(target, window, cx)
+                        });
+                    }),
+                );
+                let weak_right = weak.clone();
+                menu = menu.item(
+                    PopupMenuItem::new("关闭右侧的选项卡").on_click(move |_, window, cx| {
+                        let _ = weak_right.update(cx, |this, cx| {
+                            this.close_right(target, window, cx)
+                        });
+                    }),
+                );
+            }
+            let weak_all = weak.clone();
+            menu = menu
+                .item(PopupMenuItem::new("全部关闭").on_click(move |_, _, cx| {
+                    let _ = weak_all.update(cx, |this, cx| this.close_all_tabs(cx));
+                }))
+                .separator();
+            let weak_move = weak.clone();
+            menu = menu
+                .item(
+                    PopupMenuItem::new("将选项卡移动到新窗口").on_click(move |_, _, cx| {
+                        let _ = weak_move
+                            .update(cx, |this, cx| this.show_notice("移动选项卡未完成", cx));
+                    }),
+                )
+                .separator();
+            let weak_fav = weak.clone();
+            menu = menu.item(
+                PopupMenuItem::new("添加到收藏夹").on_click(move |_, _, cx| {
+                    let _ =
+                        weak_fav.update(cx, |this, cx| this.show_notice("收藏夹未完成", cx));
+                }),
+            );
+            if let Some(target) = close {
+                let weak_reveal = weak.clone();
+                menu = menu.item(
+                    PopupMenuItem::new("在导航窗格中显示").on_click(move |_, window, cx| {
+                        let _ = weak_reveal.update(cx, |this, cx| {
+                            this.reveal_in_tree(target, window, cx)
+                        });
+                    }),
+                );
+            }
+            menu
+        })
     }
 }
 
