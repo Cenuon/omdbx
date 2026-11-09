@@ -3786,7 +3786,7 @@ impl Omdbx {
             }
         }
         chip.context_menu(move |menu, _, _| {
-            let mut menu = menu.min_w(px(230.));
+            let mut menu = menu;
             if let Some(target) = close {
                 let weak_close = weak.clone();
                 menu = menu.item(PopupMenuItem::new("关闭").on_click(move |_, window, cx| {
