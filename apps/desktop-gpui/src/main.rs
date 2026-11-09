@@ -412,6 +412,40 @@ fn last_word(value: &str) -> String {
         .to_string()
 }
 
+fn sql_spans(value: &str) -> Vec<gpui_kit::AnyElement> {
+    let mut segments: Vec<(String, bool)> = Vec::new();
+    let mut buffer = String::new();
+    let mut is_word = false;
+    for ch in value.chars() {
+        let next_is_word = ch.is_alphanumeric() || ch == '_';
+        if !buffer.is_empty() && next_is_word != is_word {
+            segments.push((buffer, is_word));
+            buffer = String::new();
+        }
+        buffer.push(ch);
+        is_word = next_is_word;
+    }
+    if !buffer.is_empty() {
+        segments.push((buffer, is_word));
+    }
+    segments
+        .into_iter()
+        .map(|(text, word)| {
+            let keyword = word
+                && SQL_KEYWORDS
+                    .iter()
+                    .any(|keyword| keyword.eq_ignore_ascii_case(&text));
+            div()
+                .when(keyword, |this| {
+                    this.text_color(gpui_kit::rgb(0x2F6BFF))
+                        .font_weight(FontWeight::SEMIBOLD)
+                })
+                .child(text)
+                .into_any_element()
+        })
+        .collect()
+}
+
 fn cell_text(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Null => "NULL".to_string(),
@@ -774,8 +808,8 @@ struct Omdbx {
     focus_handle: FocusHandle,
     tree_scroll: ScrollHandle,
     tree_row_count: std::cell::Cell<usize>,
-    table_where: Entity<EditorState>,
-    table_order: Entity<EditorState>,
+    table_where: Entity<InputState>,
+    table_order: Entity<InputState>,
     table_page: usize,
     table_has_more: bool,
     where_value: String,
@@ -791,38 +825,8 @@ struct Omdbx {
 impl Omdbx {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索连接或表"));
-        let table_where = cx.new(|cx| {
-            let mut state = EditorState::new(window, cx)
-                .language("sql")
-                .line_number(false)
-                .folding(false);
-            state.set_editor_paddings(gpui_kit::Edges {
-                top: px(3.),
-                bottom: px(0.),
-                left: px(0.),
-                right: px(0.),
-            });
-            state.set_scrollbar_renderer(Some(std::rc::Rc::new(|_, _, _| {
-                div().into_any_element()
-            })));
-            state
-        });
-        let table_order = cx.new(|cx| {
-            let mut state = EditorState::new(window, cx)
-                .language("sql")
-                .line_number(false)
-                .folding(false);
-            state.set_editor_paddings(gpui_kit::Edges {
-                top: px(3.),
-                bottom: px(0.),
-                left: px(-40.),
-                right: px(0.),
-            });
-            state.set_scrollbar_renderer(Some(std::rc::Rc::new(|_, _, _| {
-                div().into_any_element()
-            })));
-            state
-        });
+        let table_where = cx.new(|cx| InputState::new(window, cx));
+        let table_order = cx.new(|cx| InputState::new(window, cx));
         cx.subscribe(&table_where, |this, state, event: &InputEvent, cx| match event {
             InputEvent::Change => {
                 this.where_value = state.read(cx).value().to_string();
@@ -2394,15 +2398,21 @@ impl Omdbx {
         color: Hsla,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let state = match field {
-            SuggestField::Where => &self.table_where,
-            SuggestField::Order => &self.table_order,
+        let (state, value) = match field {
+            SuggestField::Where => (&self.table_where, self.where_value.as_str()),
+            SuggestField::Order => (&self.table_order, self.order_value.as_str()),
         };
         h_flex()
             .relative()
             .flex_1()
             .min_w_0()
-            .child(Self::filter_field(state, label, color))
+            .child(Self::filter_field(
+                state,
+                value,
+                label,
+                color,
+                cx.theme().mono_font_family.clone(),
+            ))
             .when_some(self.suggest_menu(field, cx), |this, menu| this.child(menu))
     }
 
@@ -2495,9 +2505,11 @@ impl Omdbx {
     }
 
     fn filter_field(
-        state: &Entity<EditorState>,
+        state: &Entity<InputState>,
+        value: &str,
         label: &'static str,
         color: Hsla,
+        mono: SharedString,
     ) -> impl IntoElement {
         h_flex()
             .flex_1()
@@ -2516,15 +2528,31 @@ impl Omdbx {
             )
             .child(
                 div()
+                    .relative()
                     .flex_1()
                     .min_w_0()
                     .h(px(26.))
                     .child(
-                        Editor::new(state)
+                        h_flex()
+                            .absolute()
+                            .inset_0()
+                            .pl(px(4.))
+                            .items_center()
+                            .overflow_hidden()
+                            .text_size(px(13.))
+                            .font_family(mono.clone())
+                            .children(sql_spans(value)),
+                    )
+                    .child(
+                        Input::new(state)
+                            .hide_text(true)
                             .appearance(false)
                             .bordered(false)
+                            .cleanable(true)
                             .with_size(gpui_kit::component::Size::XSmall)
-                            .h(px(26.)),
+                            .text_size(px(13.))
+                            .text_color(gpui_kit::transparent_black())
+                            .font_family(mono),
                     ),
             )
     }

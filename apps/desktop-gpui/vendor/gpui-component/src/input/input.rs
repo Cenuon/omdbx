@@ -147,6 +147,8 @@ pub struct Input {
     readonly: bool,
     bordered: bool,
     focus_bordered: bool,
+    /// Paint the text transparently; a caller-owned layer supplies the glyphs.
+    hide_text: bool,
     tab_index: isize,
     selected: bool,
     content_type: Option<InputContentType>,
@@ -259,6 +261,7 @@ impl Input {
             readonly: false,
             bordered: true,
             focus_bordered: true,
+            hide_text: false,
             tab_index: 0,
             selected: false,
             content_type: None,
@@ -337,6 +340,13 @@ impl Input {
     /// Set whether to show the clear button when the input field is not empty, default is false.
     pub fn cleanable(mut self, cleanable: bool) -> Self {
         self.cleanable = cleanable;
+        self
+    }
+
+    /// Hide the editor glyphs so a caller can paint its own colored text
+    /// underneath while the caret and selection stay visible.
+    pub fn hide_text(mut self, hide: bool) -> Self {
+        self.hide_text = hide;
         self
     }
 
@@ -561,7 +571,11 @@ impl RenderOnce for Input {
         state.ensure_highlighter_factory(crate::highlighter::input_highlighter_factory(), cx);
         state.set_editor_style(
             gpui_base::input::InputEditorStyle {
-                foreground: cx.theme().foreground,
+                foreground: if self.hide_text {
+                    cx.theme().foreground.opacity(0.)
+                } else {
+                    cx.theme().foreground
+                },
                 muted_foreground: cx.theme().muted_foreground,
                 background: cx.theme().editor_background(),
                 border: cx.theme().border,
