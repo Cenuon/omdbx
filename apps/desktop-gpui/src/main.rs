@@ -29,7 +29,7 @@ use serde_json::json;
 
 gpui_kit::actions!(omdbx, [RefreshConnections]);
 
-const API: &str = "http://127.0.0.1:4224";
+const API: &str = "http://127.0.0.1:4225";
 const ROW_LIMIT: usize = 1000;
 
 // ---------------------------------------------------------------- http
@@ -492,6 +492,19 @@ impl TableDelegate for GridDelegate {
         Column::new(name.clone(), name)
             .width(px(width.clamp(120., 300.)))
             .paddings(padding)
+    }
+
+    fn render_tr(
+        &mut self,
+        row_ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> gpui_kit::Stateful<gpui_kit::Div> {
+        // Stripe only real rows; the component's own stripe option also paints
+        // the filler rows below the last record.
+        div()
+            .id(("row", row_ix))
+            .when(row_ix % 2 == 1, |this| this.bg(cx.theme().tokens.table_even))
     }
 
     fn render_th(
@@ -2254,7 +2267,7 @@ impl Omdbx {
                             .border_color(colors.border)
                             .bg(gpui_kit::rgb(0xF0F0F1)),
                     )
-                    .child(DataTable::new(grid).bordered(false).small().stripe(true).header_row_height(header_height)),
+                    .child(DataTable::new(grid).bordered(false).small().stripe(false).header_row_height(header_height)),
             )
     }
 
