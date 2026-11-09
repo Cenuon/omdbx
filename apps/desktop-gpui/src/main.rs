@@ -794,9 +794,10 @@ impl Omdbx {
         let table_where = cx.new(|cx| {
             let mut state = EditorState::new(window, cx)
                 .language("sql")
-                .line_number(false);
+                .line_number(false)
+                .folding(false);
             state.set_editor_paddings(gpui_kit::Edges {
-                top: px(0.),
+                top: px(3.),
                 bottom: px(0.),
                 left: px(0.),
                 right: px(0.),
@@ -809,11 +810,12 @@ impl Omdbx {
         let table_order = cx.new(|cx| {
             let mut state = EditorState::new(window, cx)
                 .language("sql")
-                .line_number(false);
+                .line_number(false)
+                .folding(false);
             state.set_editor_paddings(gpui_kit::Edges {
-                top: px(0.),
+                top: px(3.),
                 bottom: px(0.),
-                left: px(0.),
+                left: px(-40.),
                 right: px(0.),
             });
             state.set_scrollbar_renderer(Some(std::rc::Rc::new(|_, _, _| {
@@ -2516,13 +2518,13 @@ impl Omdbx {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .h(px(24.))
+                    .h(px(26.))
                     .child(
                         Editor::new(state)
                             .appearance(false)
                             .bordered(false)
                             .with_size(gpui_kit::component::Size::XSmall)
-                            .h(px(24.)),
+                            .h(px(26.)),
                     ),
             )
     }
@@ -3411,6 +3413,7 @@ fn main() {
             gpui_kit::KeyBinding::new("cmd-r", RefreshConnections, None),
             gpui_kit::KeyBinding::new("tab", ConfirmTab, Some("Input")),
             gpui_kit::KeyBinding::new("enter", ConfirmEnter, Some("Input")),
+            gpui_kit::KeyBinding::new("shift-enter", ConfirmEnter, Some("Input")),
             gpui_kit::KeyBinding::new("up", SuggestUp, Some("Input")),
             gpui_kit::KeyBinding::new("down", SuggestDown, Some("Input")),
         ]);
