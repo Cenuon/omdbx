@@ -1782,6 +1782,8 @@ impl Omdbx {
             .child({
                 let (tree_rows, tree_entries) = self.tree(cx);
                 let sticky = self.sticky_rows(&tree_entries, cx);
+                let max_offset = self.tree_scroll.max_offset().y;
+                let at_bottom = -self.tree_scroll.offset().y >= max_offset - px(1.);
                 div()
                     .relative()
                     .w_full()
@@ -1824,6 +1826,29 @@ impl Omdbx {
                                         ),
                                     )),
                                 ),
+                        )
+                    })
+                    .when(max_offset > px(0.) && !at_bottom, |this| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .bottom_0()
+                                .left_0()
+                                .right_0()
+                                .h(px(8.))
+                                .border_b_1()
+                                .border_color(colors.border.opacity(0.4))
+                                .bg(gpui_kit::linear_gradient(
+                                    180.,
+                                    gpui_kit::linear_color_stop(
+                                        gpui_kit::hsla(0., 0., 0., 0.),
+                                        0.,
+                                    ),
+                                    gpui_kit::linear_color_stop(
+                                        gpui_kit::hsla(0., 0., 0., 0.06),
+                                        1.,
+                                    ),
+                                )),
                         )
                     })
             })
