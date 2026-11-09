@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
+use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState, Enter, IndentInline, MoveDown, MoveUp};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::Selectable;
@@ -21,13 +21,13 @@ use gpui_kit::base::{h_resizable, resizable_panel, ResizeHandleRenderer};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     deferred, div, px, App, Context, Entity, FocusHandle, FontFeatures, FontWeight, Hsla,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
-    ScrollHandle, SharedString, Styled, Window, WindowOptions,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollHandle,
+    SharedString, Styled, Window, WindowOptions,
 };
 use serde::Deserialize;
 use serde_json::json;
 
-gpui_kit::actions!(omdbx, [RefreshConnections, ConfirmSuggestion]);
+gpui_kit::actions!(omdbx, [RefreshConnections, ConfirmTab, ConfirmEnter, SuggestUp, SuggestDown]);
 
 const API: &str = "http://127.0.0.1:4225";
 const ROW_LIMIT: usize = 1000;
@@ -774,8 +774,8 @@ struct Omdbx {
     focus_handle: FocusHandle,
     tree_scroll: ScrollHandle,
     tree_row_count: std::cell::Cell<usize>,
-    table_where: Entity<InputState>,
-    table_order: Entity<InputState>,
+    table_where: Entity<EditorState>,
+    table_order: Entity<EditorState>,
     table_page: usize,
     table_has_more: bool,
     where_value: String,
@@ -791,8 +791,16 @@ struct Omdbx {
 impl Omdbx {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索连接或表"));
-        let table_where = cx.new(|cx| InputState::new(window, cx));
-        let table_order = cx.new(|cx| InputState::new(window, cx));
+        let table_where = cx.new(|cx| {
+            EditorState::new(window, cx)
+                .language("sql")
+                .line_number(false)
+        });
+        let table_order = cx.new(|cx| {
+            EditorState::new(window, cx)
+                .language("sql")
+                .line_number(false)
+        });
         cx.subscribe(&table_where, |this, state, event: &InputEvent, cx| match event {
             InputEvent::Change => {
                 this.where_value = state.read(cx).value().to_string();
@@ -2388,7 +2396,6 @@ impl Omdbx {
         };
 
         h_flex()
-            .key_context("table-filter")
             .h(px(36.))
             .flex_none()
             .px_2()
@@ -2396,17 +2403,22 @@ impl Omdbx {
             .items_center()
             .border_b_1()
             .border_color(colors.border)
-            .on_action(cx.listener(|this, _: &ConfirmSuggestion, window, cx| {
+            .on_action(cx.listener(|this, _: &ConfirmTab, window, cx| {
                 if !this.handle_suggestion_key("tab", window, cx) {
                     window.focus_next(cx);
                 }
             }))
-            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                let key = event.keystroke.key.as_str();
-                if matches!(key, "up" | "down" | "enter" | "escape")
-                    && this.handle_suggestion_key(key, window, cx)
-                {
-                    cx.stop_propagation();
+            .on_action(cx.listener(|this, _: &ConfirmEnter, window, cx| {
+                this.handle_suggestion_key("enter", window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SuggestUp, window, cx| {
+                if !this.handle_suggestion_key("up", window, cx) {
+                    window.dispatch_action(Box::new(MoveUp), cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &SuggestDown, window, cx| {
+                if !this.handle_suggestion_key("down", window, cx) {
+                    window.dispatch_action(Box::new(MoveDown), cx);
                 }
             }))
             .child(self.filter_slot(
@@ -2461,7 +2473,7 @@ impl Omdbx {
     }
 
     fn filter_field(
-        state: &Entity<InputState>,
+        state: &Entity<EditorState>,
         label: &'static str,
         color: Hsla,
     ) -> impl IntoElement {
@@ -2470,20 +2482,22 @@ impl Omdbx {
             .min_w_0()
             .h(px(26.))
             .px_1()
+            .gap_1()
             .items_center()
             .child(
-                Input::new(state)
-                    .appearance(false)
-                    .bordered(false)
-                    .with_size(gpui_kit::component::Size::Small)
+                div()
+                    .flex_none()
                     .text_size(px(13.))
-                    .prefix(
-                        div()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(color)
-                            .child(label),
-                    ),
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(color)
+                    .child(label),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h(px(24.))
+                    .child(Editor::new(state).appearance(false).bordered(false).h(px(24.))),
             )
     }
 
@@ -3319,6 +3333,24 @@ impl Render for Omdbx {
             .size_full()
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &RefreshConnections, _, cx| this.reload(cx)))
+            .on_action(cx.listener(|_, _: &ConfirmEnter, window, cx| {
+                window.dispatch_action(
+                    Box::new(Enter {
+                        secondary: false,
+                        shift: false,
+                    }),
+                    cx,
+                );
+            }))
+            .on_action(cx.listener(|_, _: &ConfirmTab, window, cx| {
+                window.dispatch_action(Box::new(IndentInline), cx);
+            }))
+            .on_action(cx.listener(|_, _: &SuggestUp, window, cx| {
+                window.dispatch_action(Box::new(MoveUp), cx);
+            }))
+            .on_action(cx.listener(|_, _: &SuggestDown, window, cx| {
+                window.dispatch_action(Box::new(MoveDown), cx);
+            }))
             .child(shell)
             .when_some(self.notice.clone(), |this, notice| {
                 this.child(
@@ -3351,7 +3383,10 @@ fn main() {
         gpui_kit::init(cx);
         cx.bind_keys([
             gpui_kit::KeyBinding::new("cmd-r", RefreshConnections, None),
-            gpui_kit::KeyBinding::new("tab", ConfirmSuggestion, Some("table-filter")),
+            gpui_kit::KeyBinding::new("tab", ConfirmTab, Some("Input")),
+            gpui_kit::KeyBinding::new("enter", ConfirmEnter, Some("Input")),
+            gpui_kit::KeyBinding::new("up", SuggestUp, Some("Input")),
+            gpui_kit::KeyBinding::new("down", SuggestDown, Some("Input")),
         ]);
         Theme::update(cx, |theme| {
             theme.mode = ThemeMode::Light;
