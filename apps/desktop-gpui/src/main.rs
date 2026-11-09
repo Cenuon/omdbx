@@ -27,7 +27,7 @@ use gpui_kit::{
 use serde::Deserialize;
 use serde_json::json;
 
-gpui_kit::actions!(omdbx, [RefreshConnections]);
+gpui_kit::actions!(omdbx, [RefreshConnections, ConfirmSuggestion]);
 
 const API: &str = "http://127.0.0.1:4225";
 const ROW_LIMIT: usize = 1000;
@@ -726,6 +726,16 @@ enum SuggestField {
     Order,
 }
 
+struct Suggestion {
+    text: String,
+    detail: String,
+}
+
+const SQL_KEYWORDS: [&str; 20] = [
+    "AND", "OR", "NOT", "NULL", "LIKE", "IN", "IS", "BETWEEN", "EXISTS", "CASE", "WHEN",
+    "THEN", "ELSE", "END", "ASC", "DESC", "TRUE", "FALSE", "REGEXP", "DISTINCT",
+];
+
 /// What each flat tree row represents, used to pin ancestors while scrolling.
 enum TreeEntry {
     Connection(String),
@@ -794,6 +804,7 @@ impl Omdbx {
             }
             InputEvent::Focus => {
                 this.where_open = true;
+                this.where_selected = 0;
                 cx.notify();
             }
             InputEvent::Blur => {
@@ -814,6 +825,7 @@ impl Omdbx {
             }
             InputEvent::Focus => {
                 this.order_open = true;
+                this.order_selected = 0;
                 cx.notify();
             }
             InputEvent::Blur => {
@@ -2065,24 +2077,62 @@ impl Omdbx {
             )
     }
 
-    fn suggestions_for(&self, value: &str) -> Vec<String> {
+    fn suggestions_for(&self, value: &str) -> Vec<Suggestion> {
         let word = last_word(value);
         if word.is_empty() {
             return Vec::new();
         }
         let needle = word.to_lowercase();
-        let mut matches: Vec<(usize, usize, String)> = self
-            .columns
-            .iter()
-            .filter_map(|column| {
-                let lower = column.to_lowercase();
-                let position = lower.find(&needle)?;
-                // Prefix hits rank above mid-word hits, then by position.
-                Some((usize::from(position != 0), position, column.clone()))
-            })
-            .collect();
-        matches.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-        matches.into_iter().take(8).map(|(_, _, column)| column).collect()
+        // Lower rank wins: field prefix, keyword prefix, field substring,
+        // keyword substring.
+        let mut ranked: Vec<(usize, String, Suggestion)> = Vec::new();
+        for (index, column) in self.columns.iter().enumerate() {
+            let lower = column.to_lowercase();
+            let Some(position) = lower.find(&needle) else {
+                continue;
+            };
+            let rank = if position == 0 { 0 } else { 2 };
+            let detail = self
+                .column_meta
+                .get(index)
+                .map(|meta| {
+                    if meta.comment.is_empty() {
+                        meta.data_type.clone()
+                    } else {
+                        meta.comment.clone()
+                    }
+                })
+                .unwrap_or_default();
+            ranked.push((
+                rank,
+                lower,
+                Suggestion {
+                    text: column.clone(),
+                    detail,
+                },
+            ));
+        }
+        for keyword in SQL_KEYWORDS {
+            let lower = keyword.to_lowercase();
+            let Some(position) = lower.find(&needle) else {
+                continue;
+            };
+            let rank = if position == 0 { 1 } else { 3 };
+            ranked.push((
+                rank,
+                lower,
+                Suggestion {
+                    text: keyword.to_string(),
+                    detail: "SQL".to_string(),
+                },
+            ));
+        }
+        ranked.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.text.cmp(&b.2.text)));
+        ranked
+            .into_iter()
+            .take(8)
+            .map(|(_, _, suggestion)| suggestion)
+            .collect()
     }
 
     fn suggestion_selection(&self, field: SuggestField) -> usize {
@@ -2160,6 +2210,10 @@ impl Omdbx {
         } else if !order_suggestions.is_empty() {
             (SuggestField::Order, order_suggestions)
         } else {
+            if key == "enter" {
+                self.load_active(window, cx);
+                return true;
+            }
             return false;
         };
         let selected = self
@@ -2176,8 +2230,8 @@ impl Omdbx {
                 cx.notify();
                 true
             }
-            "enter" => {
-                let column = suggestions[selected].clone();
+            "enter" | "tab" => {
+                let column = suggestions[selected].text.clone();
                 self.pick_suggestion(field, &column, window, cx);
                 true
             }
@@ -2208,10 +2262,16 @@ impl Omdbx {
         }
         let selected = selected.min(suggestions.len() - 1);
         let colors = cx.theme().colors;
+        let muted = colors.muted_foreground;
+        let accent: Hsla = match field {
+            SuggestField::Where => gpui_kit::rgb(0x2F6BFF).into(),
+            SuggestField::Order => gpui_kit::rgb(0xE8722C).into(),
+        };
         let prefix = match field {
             SuggestField::Where => "where",
             SuggestField::Order => "order",
         };
+        let needle = last_word(value).to_lowercase();
 
         Some(
             deferred(
@@ -2228,25 +2288,70 @@ impl Omdbx {
                     .border_color(colors.border)
                     .bg(colors.background)
                     .shadow_md()
-                    .children(suggestions.into_iter().enumerate().map(|(index, column)| {
-                        let insert = column.clone();
-                        h_flex()
-                            .id(SharedString::from(format!("{prefix}-{column}")))
-                            .h(px(26.))
-                            .px_2()
-                            .items_center()
-                            .rounded_md()
-                            .text_size(px(12.))
-                            .when(index == selected, |this| this.bg(colors.sidebar_accent))
-                            .hover(|style| style.bg(colors.sidebar_accent))
-                            .child(column)
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, window, cx| {
-                                    this.pick_suggestion(field, &insert, window, cx);
-                                }),
-                            )
-                    })),
+                    .children(suggestions.into_iter().enumerate().map(
+                        |(index, suggestion)| {
+                            let text = suggestion.text.clone();
+                            let match_at = text.to_lowercase().find(&needle);
+                            let name: gpui_kit::AnyElement = match match_at {
+                                Some(start) if !needle.is_empty() => {
+                                    let end = start + needle.len();
+                                    h_flex()
+                                        .flex_none()
+                                        .child(text[..start].to_string())
+                                        .child(
+                                            div()
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_color(accent)
+                                                .child(text[start..end].to_string()),
+                                        )
+                                        .child(text[end..].to_string())
+                                        .into_any_element()
+                                }
+                                _ => div().child(text.clone()).into_any_element(),
+                            };
+                            let insert = text;
+                            h_flex()
+                                .id(SharedString::from(format!("{prefix}-{insert}")))
+                                .h(px(26.))
+                                .px_2()
+                                .gap_2()
+                                .items_center()
+                                .rounded_md()
+                                .text_size(px(12.))
+                                .when(index == selected, |this| this.bg(colors.sidebar_accent))
+                                .hover(|style| style.bg(colors.sidebar_accent))
+                                .child(name)
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_size(px(11.))
+                                        .text_color(muted)
+                                        .child(suggestion.detail),
+                                )
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .h(px(16.))
+                                        .px_1()
+                                        .flex()
+                                        .items_center()
+                                        .rounded(px(3.))
+                                        .border_1()
+                                        .border_color(colors.border)
+                                        .text_size(px(9.))
+                                        .text_color(muted)
+                                        .child("Tab"),
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.pick_suggestion(field, &insert, window, cx);
+                                    }),
+                                )
+                        },
+                    )),
             )
             .into_any_element(),
         )
@@ -2283,6 +2388,7 @@ impl Omdbx {
         };
 
         h_flex()
+            .key_context("table-filter")
             .h(px(36.))
             .flex_none()
             .px_2()
@@ -2290,6 +2396,11 @@ impl Omdbx {
             .items_center()
             .border_b_1()
             .border_color(colors.border)
+            .on_action(cx.listener(|this, _: &ConfirmSuggestion, window, cx| {
+                if !this.handle_suggestion_key("tab", window, cx) {
+                    window.focus_next(cx);
+                }
+            }))
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let key = event.keystroke.key.as_str();
                 if matches!(key, "up" | "down" | "enter" | "escape")
@@ -3238,11 +3349,10 @@ fn main() {
         .with_assets(gpui_kit::assets::AllAssets)
         .run(|cx: &mut App| {
         gpui_kit::init(cx);
-        cx.bind_keys([gpui_kit::KeyBinding::new(
-            "cmd-r",
-            RefreshConnections,
-            None,
-        )]);
+        cx.bind_keys([
+            gpui_kit::KeyBinding::new("cmd-r", RefreshConnections, None),
+            gpui_kit::KeyBinding::new("tab", ConfirmSuggestion, Some("table-filter")),
+        ]);
         Theme::update(cx, |theme| {
             theme.mode = ThemeMode::Light;
             // the shell background; the content card floats on it
