@@ -2998,7 +2998,7 @@ impl Omdbx {
                             .line_height(px(16.))
                             .pt(px(5.))
                             .pb(px(0.))
-                            .mt(px(2.)),
+                            .mt(px(1.)),
                     ),
             )
     }
