@@ -8,9 +8,16 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rust_xlsxwriter::Workbook;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::date_picker::{
+    DatePicker, DatePickerEvent, DatePickerState, DateTime,
+};
+use gpui_kit::component::time_field::{
+    TimeField, TimeFieldEvent, TimeFieldState, TimePrecision,
+};
 use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState, Enter, IndentInline, MoveDown, MoveUp};
 use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
@@ -22,6 +29,7 @@ use gpui_kit::component::{
 use gpui_kit::assets::IconName as AssetIcon;
 use gpui_kit::base::{h_resizable, resizable_panel, ResizeHandleRenderer};
 use gpui_kit::prelude::*;
+use gpui_kit::Focusable;
 use gpui_kit::{
     deferred, div, px, App, Context, Entity, FocusHandle, FontFeatures, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollHandle,
@@ -822,11 +830,18 @@ fn encode(value: &str) -> String {
 /// Backing store handed to gpui-kit"s DataTable: virtual scrolling, resizable
 /// columns, sorting, row/cell selection all come from the component.
 #[derive(Clone)]
+enum CellEditor {
+    Text(Entity<InputState>),
+    Date(Entity<DatePickerState>),
+    Time(Entity<TimeFieldState>),
+}
+
+#[derive(Clone)]
 struct EditingCell {
     /// Row index in the loaded page, and data-column index (without `#`).
     row: usize,
     col: usize,
-    input: Entity<InputState>,
+    editor: CellEditor,
 }
 
 #[derive(Clone)]
@@ -1024,26 +1039,38 @@ impl TableDelegate for GridDelegate {
         }
         if let Some(editing) = &self.editing {
             if editing.row == row && editing.col == col - 1 {
-                let input = editing.input.clone();
+                let text_framed = matches!(&editing.editor, CellEditor::Text(_));
+                let content = match &editing.editor {
+                    CellEditor::Text(input) => Input::new(input)
+                        .appearance(false)
+                        .bordered(false)
+                        .w_full()
+                        .with_size(gpui_kit::component::Size::XSmall)
+                        .text_size(px(13.))
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .into_any_element(),
+                    CellEditor::Date(state) => DatePicker::new(state)
+                        .appearance(false)
+                        .with_size(gpui_kit::component::Size::XSmall)
+                        .w_full()
+                        .into_any_element(),
+                    CellEditor::Time(state) => TimeField::new(state)
+                        .with_size(gpui_kit::component::Size::XSmall)
+                        .into_any_element(),
+                };
                 return div()
                     .absolute()
                     .inset_0()
                     .flex()
                     .items_center()
                     .rounded(px(2.))
-                    .border_1()
-                    .border_color(cx.theme().colors.foreground)
+                    .when(text_framed, |this| {
+                        this.border_1()
+                            .border_color(cx.theme().colors.foreground)
+                    })
                     .bg(cx.theme().colors.background)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        Input::new(&input)
-                            .appearance(false)
-                            .bordered(false)
-                            .w_full()
-                            .with_size(gpui_kit::component::Size::XSmall)
-                            .text_size(px(13.))
-                            .font_family(cx.theme().mono_font_family.clone()),
-                    )
+                    .child(content)
                     .into_any_element();
             }
         }
@@ -1336,6 +1363,65 @@ fn data_type_color(data_type: &str, muted: Hsla) -> Hsla {
 fn is_temporal_type(data_type: &str) -> bool {
     let ty = data_type.to_ascii_lowercase();
     ["date", "time", "year"].iter().any(|needle| ty.contains(needle))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TemporalKind {
+    Text,
+    Date,
+    DateTime,
+    Time,
+}
+
+fn temporal_kind(data_type: &str) -> TemporalKind {
+    let ty = data_type.to_ascii_lowercase();
+    if ty.contains("timestamp") || ty.contains("datetime") {
+        TemporalKind::DateTime
+    } else if ty.contains("date") {
+        TemporalKind::Date
+    } else if ty.contains("time") {
+        TemporalKind::Time
+    } else {
+        TemporalKind::Text
+    }
+}
+
+fn parse_datetime(value: &str) -> Option<NaiveDateTime> {
+    let value = value.trim();
+    if value.is_empty() || value == "NULL" {
+        return None;
+    }
+    for format in [
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%dT%H:%M:%S",
+    ] {
+        if let Ok(value) = NaiveDateTime::parse_from_str(value, format) {
+            return Some(value);
+        }
+    }
+    for format in ["%Y-%m-%d", "%Y/%m/%d"] {
+        if let Ok(date) = NaiveDate::parse_from_str(value, format) {
+            return date.and_hms_opt(0, 0, 0);
+        }
+    }
+    None
+}
+
+fn parse_time(value: &str) -> Option<NaiveTime> {
+    let value = value.trim();
+    if value.is_empty() || value == "NULL" {
+        return None;
+    }
+    for format in ["%H:%M:%S%.f", "%H:%M:%S", "%H:%M"] {
+        if let Ok(value) = NaiveTime::parse_from_str(value, format) {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn is_numeric_type(data_type: &str) -> bool {
@@ -1937,46 +2023,171 @@ impl Omdbx {
         if self.columns.get(col).is_none() {
             return;
         }
+        let column_type = self
+            .column_meta
+            .get(col)
+            .map(|meta| meta.data_type.clone())
+            .unwrap_or_default();
+        let kind = temporal_kind(&column_type);
 
-        let input = cx.new(|cx| InputState::new(window, cx));
-        input.update(cx, |state, cx| {
-            state.set_value(original, window, cx);
-            state.select_all(window, cx);
+        if kind == TemporalKind::Text {
+            let input = cx.new(|cx| InputState::new(window, cx));
+            input.update(cx, |state, cx| {
+                state.set_value(original, window, cx);
+                state.select_all(window, cx);
+            });
+            grid.update(cx, |table, cx| {
+                table.delegate_mut().editing = Some(EditingCell {
+                    row,
+                    col,
+                    editor: CellEditor::Text(input.clone()),
+                });
+                cx.notify();
+            });
+            // The click that opened the editor continues to the table after
+            // this handler, so focus the input once that event turn has finished.
+            let focused = input.clone();
+            window.defer(cx, move |window, cx| {
+                focused.update(cx, |state, cx| state.focus(window, cx));
+            });
+            let grid = grid.clone();
+            cx.subscribe_in(&input, window, move |this, input, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                    this.finish_edit(&grid, input, cx);
+                }
+            })
+            .detach();
+            return;
+        }
+
+        if kind == TemporalKind::Time {
+            let state = cx.new(|cx| TimeFieldState::new(window, cx));
+            state.update(cx, |state, cx| {
+                state.set_precision(TimePrecision::Second, window, cx);
+                if let Some(value) = parse_time(&original) {
+                    state.set_time(value, window, cx);
+                }
+            });
+            grid.update(cx, |table, cx| {
+                table.delegate_mut().editing = Some(EditingCell {
+                    row,
+                    col,
+                    editor: CellEditor::Time(state.clone()),
+                });
+                cx.notify();
+            });
+            cx.subscribe_in(&state, window, move |this, _, event: &TimeFieldEvent, _, cx| {
+                let TimeFieldEvent::Change(value) = event;
+                let text = value.format("%H:%M:%S").to_string();
+                this.stage_cell_value(row, col, &text, cx);
+            })
+            .detach();
+            let state_id = state.entity_id();
+            let focus = Focusable::focus_handle(&*state.read(cx), cx);
+            cx.on_blur(&focus, window, move |this, _window, cx| {
+                let clear = this.grid.as_ref().is_some_and(|grid| {
+                    grid.read(cx)
+                        .delegate()
+                        .editing
+                        .as_ref()
+                        .is_some_and(|edit| {
+                            edit.row == row
+                                && edit.col == col
+                                && matches!(
+                                    &edit.editor,
+                                    CellEditor::Time(current)
+                                        if current.entity_id() == state_id
+                                )
+                        })
+                });
+                if clear {
+                    if let Some(grid) = this.grid.clone() {
+                        grid.update(cx, |table, cx| {
+                            table.delegate_mut().editing = None;
+                            cx.notify();
+                        });
+                    }
+                }
+            })
+            .detach();
+            let focused = state.clone();
+            window.defer(cx, move |window, cx| {
+                focused.update(cx, |state, cx| state.focus(window, cx));
+            });
+            return;
+        }
+
+        let with_time = kind == TemporalKind::DateTime;
+        let format = if with_time {
+            "%Y-%m-%d %H:%M:%S"
+        } else {
+            "%Y-%m-%d"
+        };
+        let state = cx.new(|cx| {
+            let mut state = DatePickerState::new(window, cx).date_format(format);
+            if with_time {
+                state = state.time_precision(TimePrecision::Second);
+            }
+            state
         });
+        if let Some(value) = parse_datetime(&original) {
+            state.update(cx, |state, cx| {
+                state.set_date_time(DateTime::Single(Some(value)), window, cx)
+            });
+        }
         grid.update(cx, |table, cx| {
             table.delegate_mut().editing = Some(EditingCell {
                 row,
                 col,
-                input: input.clone(),
+                editor: CellEditor::Date(state.clone()),
             });
             cx.notify();
         });
-        // The click that opened the editor continues to the table after this
-        // handler, so focus the input once that event turn has finished.
-        let focused = input.clone();
-        window.defer(cx, move |window, cx| {
-            focused.update(cx, |state, cx| state.focus(window, cx));
-        });
-        let grid = grid.clone();
-        cx.subscribe_in(&input, window, move |this, input, event: &InputEvent, _, cx| {
-            if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
-                this.finish_edit(&grid, input, cx);
+        let grid_for_events = grid.clone();
+        cx.subscribe_in(&state, window, move |this, _, event: &DatePickerEvent, _, cx| {
+            let DatePickerEvent::Change(value) = event;
+            if let Some(value) = value.start() {
+                let text = if with_time {
+                    value.format("%Y-%m-%d %H:%M:%S").to_string()
+                } else {
+                    value.format("%Y-%m-%d").to_string()
+                };
+                this.stage_cell_value(row, col, &text, cx);
+                if !with_time {
+                    grid_for_events.update(cx, |table, cx| {
+                        table.delegate_mut().editing = None;
+                        cx.notify();
+                    });
+                }
             }
         })
         .detach();
+        let focused = state.clone();
+        window.defer(cx, move |window, cx| {
+            focused.update(cx, |state, cx| {
+                state.focus_handle(cx).focus(window, cx);
+                state.set_open(true, window, cx);
+            });
+        });
     }
 
     fn commit_editing(&mut self, grid: &Entity<TableState<GridDelegate>>, cx: &mut Context<Self>) {
-        let Some(input) = grid
+        let editor = grid
             .read(cx)
             .delegate()
             .editing
             .as_ref()
-            .map(|edit| edit.input.clone())
-        else {
-            return;
-        };
-        self.finish_edit(grid, &input, cx);
+            .map(|edit| edit.editor.clone());
+        match editor {
+            Some(CellEditor::Text(input)) => self.finish_edit(grid, &input, cx),
+            Some(_) => {
+                grid.update(cx, |table, cx| {
+                    table.delegate_mut().editing = None;
+                    cx.notify();
+                });
+            }
+            None => {}
+        }
     }
 
     fn finish_edit(
@@ -1990,7 +2201,12 @@ impl Omdbx {
             delegate
                 .editing
                 .as_ref()
-                .filter(|edit| edit.input.entity_id() == input.entity_id())
+                .filter(|edit| {
+                    matches!(
+                        &edit.editor,
+                        CellEditor::Text(current) if current.entity_id() == input.entity_id()
+                    )
+                })
                 .cloned()
         }) else {
             return;
@@ -4961,6 +5177,23 @@ mod export_tests {
             sql,
             "UPDATE `people` SET `name` = 'O''Brien' WHERE `id` = 1"
         );
+    }
+
+    #[test]
+    fn temporal_editors_pick_the_right_widget() {
+        assert_eq!(temporal_kind("date"), TemporalKind::Date);
+        assert_eq!(temporal_kind("datetime"), TemporalKind::DateTime);
+        assert_eq!(
+            temporal_kind("timestamp without time zone"),
+            TemporalKind::DateTime
+        );
+        assert_eq!(temporal_kind("time"), TemporalKind::Time);
+        assert_eq!(temporal_kind("varchar(20)"), TemporalKind::Text);
+        let value = parse_datetime("2025-11-05 22:38:02").unwrap();
+        assert_eq!(value.to_string(), "2025-11-05 22:38:02");
+        assert_eq!(parse_datetime("2025-11-05").unwrap().to_string(), "2025-11-05 00:00:00");
+        assert_eq!(parse_time("09:30:15").unwrap().to_string(), "09:30:15");
+        assert!(parse_time("NULL").is_none());
     }
 
     #[test]

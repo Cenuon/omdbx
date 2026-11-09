@@ -441,7 +441,7 @@ impl DatePickerState {
         }
     }
 
-    fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !open {
             self.focus_back_if_need(window, cx);
         }

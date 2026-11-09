@@ -5438,6 +5438,7 @@ dependencies = [
 name = "omdbx-gpui"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "gpui",
  "gpui-kit",
  "rust_xlsxwriter",
