@@ -20,7 +20,7 @@ use gpui_kit::assets::IconName as AssetIcon;
 use gpui_kit::base::{h_resizable, resizable_panel, ResizeHandleRenderer};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    div, px, App, Context, Entity, FocusHandle, FontFeatures, FontWeight, Hsla,
+    deferred, div, px, App, Context, Entity, FocusHandle, FontFeatures, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollHandle,
     SharedString, Styled, Window, WindowOptions,
 };
@@ -754,6 +754,9 @@ struct Omdbx {
     table_order: Entity<InputState>,
     table_page: usize,
     table_has_more: bool,
+    where_value: String,
+    where_open: bool,
+    where_suppress_open: bool,
 }
 
 impl Omdbx {
@@ -761,6 +764,25 @@ impl Omdbx {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索连接或表"));
         let table_where = cx.new(|cx| InputState::new(window, cx));
         let table_order = cx.new(|cx| InputState::new(window, cx));
+        cx.subscribe(&table_where, |this, state, event: &InputEvent, cx| match event {
+            InputEvent::Change => {
+                this.where_value = state.read(cx).value().to_string();
+                if !this.where_suppress_open {
+                    this.where_open = true;
+                }
+                cx.notify();
+            }
+            InputEvent::Focus => {
+                this.where_open = true;
+                cx.notify();
+            }
+            InputEvent::Blur => {
+                this.where_open = false;
+                cx.notify();
+            }
+            _ => {}
+        })
+        .detach();
         cx.subscribe(&search, |this, state, event: &InputEvent, cx| match event {
             InputEvent::Change => {
                 this.filter = state.read(cx).value().to_string();
@@ -826,6 +848,9 @@ impl Omdbx {
             table_order,
             table_page: 1,
             table_has_more: false,
+            where_value: String::new(),
+            where_open: false,
+            where_suppress_open: false,
         };
         this.check_for_update(cx);
         this
@@ -1995,6 +2020,14 @@ impl Omdbx {
             )
     }
 
+    fn where_word(&self) -> String {
+        self.where_value
+            .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .next()
+            .unwrap_or_default()
+            .to_string()
+    }
+
     /// WHERE / ORDER BY input above a table tab, plus copy and refresh.
     fn table_filter_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
@@ -2014,11 +2047,80 @@ impl Omdbx {
             .items_center()
             .border_b_1()
             .border_color(colors.border)
-            .child(Self::filter_field(
-                &self.table_where,
-                "WHERE",
-                gpui_kit::rgb(0x2F6BFF).into(),
-            ))
+            .child({
+                let word = self.where_word();
+                let suggestions: Vec<String> = if self.where_open && !word.is_empty() {
+                    self.columns
+                        .iter()
+                        .filter(|column| column.to_lowercase().starts_with(&word.to_lowercase()))
+                        .take(8)
+                        .cloned()
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                h_flex()
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .child(Self::filter_field(
+                        &self.table_where,
+                        "WHERE",
+                        gpui_kit::rgb(0x2F6BFF).into(),
+                    ))
+                    .when(!suggestions.is_empty(), |this| {
+                        this.child(deferred(
+                            v_flex()
+                                .absolute()
+                                .occlude()
+                                .top(px(28.))
+                                .left_0()
+                                .right_0()
+                                .p_1()
+                                .gap(px(1.))
+                                .rounded_md()
+                                .border_1()
+                                .border_color(colors.border)
+                                .bg(colors.background)
+                                .shadow_md()
+                                .children(suggestions.into_iter().map(|column| {
+                                    let insert = column.clone();
+                                    h_flex()
+                                        .id(SharedString::from(format!("where-{column}")))
+                                        .h(px(26.))
+                                        .px_2()
+                                        .items_center()
+                                        .rounded_md()
+                                        .text_size(px(12.))
+                                        .hover(|style| style.bg(colors.sidebar_accent))
+                                        .child(column)
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _, window, cx| {
+                                                let value = this.where_value.clone();
+                                                let word = this.where_word();
+                                                let base = value
+                                                    .strip_suffix(&word)
+                                                    .unwrap_or(&value)
+                                                    .to_string();
+                                                this.where_suppress_open = true;
+                                                this.table_where.update(cx, |state, cx| {
+                                                    state.set_value(
+                                                        format!("{base}{insert}"),
+                                                        window,
+                                                        cx,
+                                                    )
+                                                });
+                                                this.where_suppress_open = false;
+                                                this.where_open = false;
+                                                cx.notify();
+                                            }),
+                                        )
+                                }))
+                                .into_any_element(),
+                        ))
+                    })
+            })
             .child(divider())
             .child(Self::filter_field(
                 &self.table_order,
