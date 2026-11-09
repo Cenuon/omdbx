@@ -2071,12 +2071,18 @@ impl Omdbx {
             return Vec::new();
         }
         let needle = word.to_lowercase();
-        self.columns
+        let mut matches: Vec<(usize, usize, String)> = self
+            .columns
             .iter()
-            .filter(|column| column.to_lowercase().starts_with(&needle))
-            .take(8)
-            .cloned()
-            .collect()
+            .filter_map(|column| {
+                let lower = column.to_lowercase();
+                let position = lower.find(&needle)?;
+                // Prefix hits rank above mid-word hits, then by position.
+                Some((usize::from(position != 0), position, column.clone()))
+            })
+            .collect();
+        matches.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        matches.into_iter().take(8).map(|(_, _, column)| column).collect()
     }
 
     fn suggestion_selection(&self, field: SuggestField) -> usize {
