@@ -654,6 +654,13 @@ struct Tab {
     table: String,
 }
 
+/// What each flat tree row represents, used to pin ancestors while scrolling.
+enum TreeEntry {
+    Connection(String),
+    Database(String, String),
+    Table(String, String),
+}
+
 struct Omdbx {
     connections: Vec<Connection>,
     error: Option<String>,
@@ -1508,19 +1515,43 @@ impl Omdbx {
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_connection(&id, cx)))
     }
 
+    fn database_row(
+        &self,
+        connection_id: &str,
+        database: &str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let colors = cx.theme().colors;
+        let conn_id = connection_id.to_string();
+        let db_name = database.to_string();
+        tree_row(
+            format!("db-{connection_id}|{database}"),
+            28.0,
+            Icon::new(AssetIcon::Database),
+            database.to_string(),
+            colors,
+            cx.listener(move |this, _, _, cx| this.toggle_database(&conn_id, &db_name, cx)),
+        )
+    }
+
     /// Sidebar tree, narrowed to rows matching the search field. While a query
     /// is active the matching branches are shown expanded and every other row
     /// is dropped, so the tree reads as a flat result list.
-    fn tree(&self, cx: &mut Context<Self>) -> Vec<gpui_kit::AnyElement> {
+    fn tree(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> (Vec<gpui_kit::AnyElement>, Vec<TreeEntry>) {
         let colors = cx.theme().colors;
         let filter = self.filter.trim().to_lowercase();
         let searching = !filter.is_empty();
         let matches = |text: &str| filter.is_empty() || text.to_lowercase().contains(&filter);
 
         let mut rows = Vec::new();
+        let mut entries = Vec::new();
         for connection in &self.connections {
             let conn_match = matches(&connection.name) || matches(&connection.db_type);
             let mut children = Vec::new();
+            let mut child_entries = Vec::new();
 
             for database in self
                 .databases
@@ -1537,21 +1568,11 @@ impl Omdbx {
                 }
 
                 let db_open = self.open_databases.contains(&key) || searching;
-                let conn_id = connection.id.clone();
-                let db_name = database.clone();
-                children.push(
-                    tree_row(
-                        format!("db-{key}"),
-                        28.0,
-                        Icon::new(AssetIcon::Database),
-                        database.clone(),
-                        colors,
-                        cx.listener(move |this, _, _, cx| {
-                            this.toggle_database(&conn_id, &db_name, cx)
-                        }),
-                    )
-                    .into_any_element(),
-                );
+                children.push(self.database_row(&connection.id, &database, cx).into_any_element());
+                child_entries.push(TreeEntry::Database(
+                    connection.id.clone(),
+                    database.clone(),
+                ));
                 if !db_open {
                     continue;
                 }
@@ -1576,6 +1597,10 @@ impl Omdbx {
                         )
                         .into_any_element(),
                     );
+                    child_entries.push(TreeEntry::Table(
+                        connection.id.clone(),
+                        database.clone(),
+                    ));
                 }
             }
 
@@ -1583,9 +1608,41 @@ impl Omdbx {
                 continue;
             }
             rows.push(self.connection_row(connection, cx).into_any_element());
+            entries.push(TreeEntry::Connection(connection.id.clone()));
             if self.open_connections.contains(&connection.id) || searching {
                 rows.extend(children);
+                entries.extend(child_entries);
             }
+        }
+        (rows, entries)
+    }
+
+    /// Rows pinned above the scrolling tree: the open connection, plus its
+    /// database when the visible list is inside that database.
+    fn sticky_rows(
+        &self,
+        entries: &[TreeEntry],
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui_kit::AnyElement> {
+        if !self.filter.trim().is_empty() || self.tree_scroll.offset().y >= px(0.) {
+            return Vec::new();
+        }
+        let (connection_id, database) = match entries.get(self.tree_scroll.top_item()) {
+            Some(TreeEntry::Connection(connection_id)) => (connection_id, None),
+            Some(TreeEntry::Database(connection_id, database)) => (connection_id, Some(database)),
+            Some(TreeEntry::Table(connection_id, database)) => (connection_id, Some(database)),
+            None => return Vec::new(),
+        };
+        let Some(connection) = self
+            .connections
+            .iter()
+            .find(|connection| &connection.id == connection_id)
+        else {
+            return Vec::new();
+        };
+        let mut rows = vec![self.connection_row(connection, cx).into_any_element()];
+        if let Some(database) = database {
+            rows.push(self.database_row(connection_id, database, cx).into_any_element());
         }
         rows
     }
@@ -1717,16 +1774,38 @@ impl Omdbx {
                     )
                     .child(self.connections_header(cx)),
             )
-            .child(
-                v_flex()
-                    .id("sidebar-tree")
+            .child({
+                let (tree_rows, tree_entries) = self.tree(cx);
+                let sticky = self.sticky_rows(&tree_entries, cx);
+                div()
+                    .relative()
+                    .w_full()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.tree_scroll)
-                    .pb_2()
-                    .children(self.tree(cx)),
-            )
+                    .child(
+                        v_flex()
+                            .id("sidebar-tree")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.tree_scroll)
+                            .on_scroll(cx.listener(|_, _, _, cx| cx.notify()))
+                            .pb_2()
+                            .children(tree_rows),
+                    )
+                    .when(!sticky.is_empty(), |this| {
+                        this.child(
+                            v_flex()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .right_0()
+                                .bg(colors.sidebar)
+                                .border_b_1()
+                                .border_color(colors.border)
+                                .children(sticky),
+                        )
+                    })
+            })
             .child(
                 h_flex()
                     .h(px(44.))
