@@ -1624,10 +1624,15 @@ impl Omdbx {
         entries: &[TreeEntry],
         cx: &mut Context<Self>,
     ) -> Vec<gpui_kit::AnyElement> {
-        if !self.filter.trim().is_empty() || self.tree_scroll.offset().y >= px(0.) {
+        if !self.filter.trim().is_empty() {
             return Vec::new();
         }
-        let (connection_id, database) = match entries.get(self.tree_scroll.top_item()) {
+        // Nothing is scrolled past the first row: keep the list unadorned.
+        let top_index = self.tree_scroll.top_item();
+        if top_index == 0 {
+            return Vec::new();
+        }
+        let (connection_id, database) = match entries.get(top_index) {
             Some(TreeEntry::Connection(connection_id)) => (connection_id, None),
             Some(TreeEntry::Database(connection_id, database)) => (connection_id, Some(database)),
             Some(TreeEntry::Table(connection_id, database)) => (connection_id, Some(database)),
