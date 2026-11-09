@@ -30,7 +30,7 @@ use serde_json::json;
 gpui_kit::actions!(omdbx, [RefreshConnections]);
 
 const API: &str = "http://127.0.0.1:4224";
-const ROW_LIMIT: usize = 200;
+const ROW_LIMIT: usize = 1000;
 
 // ---------------------------------------------------------------- http
 
@@ -278,6 +278,7 @@ struct TableData {
     columns: Vec<String>,
     column_types: Vec<String>,
     rows: Vec<Vec<String>>,
+    has_more: bool,
 }
 
 fn fetch_rows(
@@ -287,6 +288,7 @@ fn fetch_rows(
     table: &str,
     where_clause: &str,
     order_clause: &str,
+    row_offset: usize,
 ) -> Result<TableData, String> {
     let mut sql = format!("SELECT * FROM {}", connection.quote(table));
     if !where_clause.is_empty() {
@@ -297,8 +299,7 @@ fn fetch_rows(
         sql.push_str(" ORDER BY ");
         sql.push_str(order_clause);
     }
-    sql.push_str(&format!(" LIMIT {ROW_LIMIT}"));
-    run_sql(connection, database, schema, &sql)
+    run_sql(connection, database, schema, &sql, row_offset)
 }
 
 fn run_sql(
@@ -306,6 +307,7 @@ fn run_sql(
     database: &str,
     schema: &str,
     sql: &str,
+    row_offset: usize,
 ) -> Result<TableData, String> {
     let value = post_json(
         &format!("{API}/api/query/execute"),
@@ -315,6 +317,7 @@ fn run_sql(
             "schema": schema,
             "sql": sql,
             "maxRows": ROW_LIMIT,
+            "rowOffset": row_offset,
         }),
     )?;
     let columns = value
@@ -352,6 +355,10 @@ fn run_sql(
                 .collect()
         })
         .unwrap_or_default();
+    let has_more = value
+        .get("has_more")
+        .and_then(|flag| flag.as_bool())
+        .unwrap_or(false);
     if let Some(error) = value.get("error").and_then(|error| error.as_object()) {
         let message = error
             .get("detail")
@@ -360,7 +367,12 @@ fn run_sql(
             .unwrap_or("查询失败");
         return Err(message.to_string());
     }
-    Ok(TableData { columns, column_types, rows })
+    Ok(TableData {
+        columns,
+        column_types,
+        rows,
+        has_more,
+    })
 }
 
 fn sql_tables(sql: &str) -> Vec<String> {
@@ -727,6 +739,8 @@ struct Omdbx {
     tree_row_count: std::cell::Cell<usize>,
     table_where: Entity<InputState>,
     table_order: Entity<InputState>,
+    table_page: usize,
+    table_has_more: bool,
 }
 
 impl Omdbx {
@@ -797,6 +811,8 @@ impl Omdbx {
             tree_row_count: std::cell::Cell::new(0),
             table_where,
             table_order,
+            table_page: 1,
+            table_has_more: false,
         };
         this.check_for_update(cx);
         this
@@ -992,6 +1008,8 @@ impl Omdbx {
     }
 
     fn clear_table_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.table_page = 1;
+        self.table_has_more = false;
         self.table_where
             .update(cx, |state, cx| state.set_value("", window, cx));
         self.table_order
@@ -1013,6 +1031,7 @@ impl Omdbx {
         cx.notify();
         let where_clause = self.table_where.read(cx).value().trim().to_string();
         let order_clause = self.table_order.read(cx).value().trim().to_string();
+        let row_offset = self.table_page.saturating_sub(1) * ROW_LIMIT;
         match fetch_rows(
             &connection,
             &tab.database,
@@ -1020,6 +1039,7 @@ impl Omdbx {
             &tab.table,
             &where_clause,
             &order_clause,
+            row_offset,
         ) {
             Ok(data) => {
                 let table_meta = fetch_columns(
@@ -1050,12 +1070,14 @@ impl Omdbx {
                 self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
                 self.columns = data.columns;
                 self.rows = data.rows;
+                self.table_has_more = data.has_more;
                 self.error = None;
             }
             Err(message) => {
                 self.grid = None;
                 self.columns = Vec::new();
                 self.rows = Vec::new();
+                self.table_has_more = false;
                 self.error = Some(message);
             }
         }
@@ -1303,7 +1325,7 @@ impl Omdbx {
         self.loading = true;
         cx.notify();
         let started = std::time::Instant::now();
-        match run_sql(&connection, &database, &schema, &sql) {
+        match run_sql(&connection, &database, &schema, &sql, 0) {
             Ok(data) => {
                 let mut schema_columns: Vec<ColumnMeta> = Vec::new();
                 for table in sql_tables(&sql) {
@@ -2055,6 +2077,153 @@ impl Omdbx {
             )
     }
 
+    /// Fixed toolbar under a table: row edits, execution control and paging.
+    fn table_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors;
+        let muted = colors.muted_foreground;
+        let page = self.table_page;
+        let icon_size = px(15.);
+
+        h_flex()
+            .h(px(34.))
+            .flex_none()
+            .px_3()
+            .gap_1()
+            .items_center()
+            .border_t_1()
+            .border_color(colors.border)
+            .bg(colors.background)
+            .child(Self::icon_button(
+                "row-add",
+                Icon::new(AssetIcon::Plus)
+                    .with_size(icon_size)
+                    .text_color(muted)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, _, cx| this.show_notice("新增行未完成", cx)),
+            ))
+            .child(Self::icon_button(
+                "row-remove",
+                Icon::new(AssetIcon::Minus)
+                    .with_size(icon_size)
+                    .text_color(muted)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, _, cx| this.show_notice("删除行未完成", cx)),
+            ))
+            .child(Self::icon_button(
+                "row-save",
+                Icon::new(AssetIcon::Check)
+                    .with_size(icon_size)
+                    .text_color(muted)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, _, cx| this.show_notice("保存修改未完成", cx)),
+            ))
+            .child(Self::icon_button(
+                "row-cancel",
+                div()
+                    .text_size(px(14.))
+                    .text_color(muted)
+                    .child("✕")
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, _, cx| this.show_notice("取消修改未完成", cx)),
+            ))
+            .child(Self::icon_button(
+                "table-reload",
+                Icon::new(AssetIcon::RotateCw)
+                    .with_size(icon_size)
+                    .text_color(muted)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, window, cx| this.load_active(window, cx)),
+            ))
+            .child(Self::icon_button(
+                "stop-query",
+                div()
+                    .w(px(11.))
+                    .h(px(11.))
+                    .rounded(px(2.))
+                    .bg(muted)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, _, cx| this.show_notice("停止执行未完成", cx)),
+            ))
+            .child(div().flex_1())
+            .child(Self::icon_button(
+                "page-first",
+                Icon::new(AssetIcon::ChevronsLeft)
+                    .with_size(icon_size)
+                    .text_color(muted)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, window, cx| {
+                    if this.table_page != 1 {
+                        this.table_page = 1;
+                        this.load_active(window, cx);
+                    }
+                }),
+            ))
+            .child(Self::icon_button(
+                "page-prev",
+                Icon::new(AssetIcon::ChevronLeft)
+                    .with_size(icon_size)
+                    .text_color(muted)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, window, cx| {
+                    if this.table_page > 1 {
+                        this.table_page -= 1;
+                        this.load_active(window, cx);
+                    }
+                }),
+            ))
+            .child(
+                div()
+                    .w(px(42.))
+                    .h(px(24.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(colors.border)
+                    .text_size(px(12.))
+                    .child(page.to_string()),
+            )
+            .child(Self::icon_button(
+                "page-next",
+                Icon::new(AssetIcon::ChevronRight)
+                    .with_size(icon_size)
+                    .text_color(muted)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, window, cx| {
+                    if this.table_has_more {
+                        this.table_page += 1;
+                        this.load_active(window, cx);
+                    }
+                }),
+            ))
+            .child(Self::icon_button(
+                "page-last",
+                Icon::new(AssetIcon::ChevronsRight)
+                    .with_size(icon_size)
+                    .text_color(muted)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, _, cx| {
+                    if !this.table_has_more {
+                        this.show_notice("已经是最后一页", cx)
+                    } else {
+                        this.show_notice("跳到最后未完成", cx)
+                    }
+                }),
+            ))
+    }
+
     /// Table with an outer frame, a small gap, and a rounded content area.
     fn table_frame(
         &self,
@@ -2502,6 +2671,9 @@ impl Omdbx {
                         .into_any_element(),
                     },
                 }
+            })
+            .when(!self.show_query && tab.is_some(), |this| {
+                this.child(self.table_footer(cx))
             })
     }
 
