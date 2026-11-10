@@ -6302,8 +6302,7 @@ impl Omdbx {
                                             cx.notify();
                                         }
                                     },
-                                ))
-                                .child(div().w(px(1.)).h_full().bg(colors.border)),
+                                )),
                         )
                         .child(
                             v_flex()
