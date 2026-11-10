@@ -21,3 +21,6 @@ cell editor matches the surrounding cells.
 The table uses 4px overlay scrollbars and reserves exactly that bottom band,
 so the horizontal bar no longer covers the last row or leaves a gap above the
 footer.
+
+Cell selection only scrolls when the clicked cell is outside the viewport
+(`ScrollStrategy::Nearest`), so clicking an edge row no longer jumps the grid.

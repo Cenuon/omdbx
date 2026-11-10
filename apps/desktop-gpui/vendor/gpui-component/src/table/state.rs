@@ -619,7 +619,7 @@ where
     ///
     /// This method:
     /// - Switches the table to cell selection mode
-    /// - Scrolls to make the cell visible (centered vertically)
+    /// - Scrolls only when the cell is outside the viewport
     /// - Emits a [`TableEvent::SelectCell`] event
     ///
     /// # Example
@@ -635,9 +635,10 @@ where
         self.selected_cell = Some((row_ix, col_ix));
         self.right_clicked_cell = None;
 
-        // Scroll to the cell
+        // Scroll only when the cell is outside the viewport; centering every
+        // click made the grid jump when clicking a visible edge row.
         self.vertical_scroll_handle
-            .scroll_to_item(row_ix, ScrollStrategy::Center);
+            .scroll_to_item(row_ix, ScrollStrategy::Nearest);
         self.scroll_to_col(col_ix, cx);
 
         cx.emit(TableEvent::SelectCell(row_ix, col_ix));
