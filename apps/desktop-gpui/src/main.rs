@@ -2258,7 +2258,6 @@ impl Omdbx {
             index
         };
         self.tab_scroll.scroll_to_item(tab_index);
-        self.props_open = true;
         self.clear_table_filters(window, cx);
         self.load_active(window, cx);
         self.sync_props_if_open(window, cx);
