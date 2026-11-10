@@ -936,6 +936,8 @@ struct GridDelegate {
     show_comments: bool,
     row_offset: usize,
     editing: Option<EditingCell>,
+    /// Data cells whose value differs from the database.
+    dirty: HashSet<(usize, usize)>,
     /// Present for table tabs; query-result grids are read-only.
     weak: Option<gpui_kit::WeakEntity<Omdbx>>,
 }
@@ -1110,6 +1112,7 @@ impl TableDelegate for GridDelegate {
                 .child(format!("{}", self.row_offset + row + 1))
                 .into_any_element();
         }
+        let dirty = self.dirty.contains(&(row, col - 1));
         if let Some(editing) = &self.editing {
             if editing.row == row && editing.col == col - 1 {
                 let content = match &editing.editor {
@@ -1146,7 +1149,11 @@ impl TableDelegate for GridDelegate {
                     .rounded(px(2.))
                     .border_1()
                     .border_color(cx.theme().colors.foreground)
-                    .bg(cx.theme().colors.background)
+                    .bg(if dirty {
+                        gpui_kit::rgb(0xFFF0C2).into()
+                    } else {
+                        cx.theme().colors.background
+                    })
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(content)
                     .into_any_element();
@@ -1167,11 +1174,21 @@ impl TableDelegate for GridDelegate {
         let column_name = self.columns.get(col - 1).cloned().unwrap_or_default();
         let cell = div()
             .id(SharedString::from(format!("cell-body-{row}-{col}")))
+            .relative()
             .h_full()
             .w_full()
             .flex()
             .items_center()
             .font_family(cx.theme().mono_font_family.clone())
+            .when(dirty, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .right(px(-12.))
+                        .bg(gpui_kit::rgb(0xFFF0C2)),
+                )
+            })
             .when(col > 1, |this| {
                 this.child(
                     div()
@@ -2007,6 +2024,7 @@ impl Omdbx {
             self.pending_edits.clear();
             self.show_notice("未保存的修改已丢弃", cx);
         }
+        self.sync_dirty_cells(cx);
         let Some(index) = self.active else { return };
         let Some(tab) = self.tabs.get(index).cloned() else { return };
         let Some(connection) = self
@@ -2081,6 +2099,7 @@ impl Omdbx {
                             show_comments: this.show_comments,
                             row_offset,
                             editing: None,
+                            dirty: HashSet::new(),
                             weak: Some(cx.entity().downgrade()),
                         };
                         this.grid = Some(cx.new(|cx| {
@@ -2392,6 +2411,17 @@ impl Omdbx {
         cx.notify();
     }
 
+    fn sync_dirty_cells(&mut self, cx: &mut Context<Self>) {
+        let Some(grid) = self.grid.clone() else {
+            return;
+        };
+        let dirty: HashSet<(usize, usize)> = self.pending_edits.keys().copied().collect();
+        grid.update(cx, |table, cx| {
+            table.delegate_mut().dirty = dirty;
+            cx.notify();
+        });
+    }
+
     fn primary_key_values(
         &self,
         row: usize,
@@ -2498,6 +2528,7 @@ impl Omdbx {
             value.to_string()
         };
         self.set_local_cell(row, col, &display, cx);
+        self.sync_dirty_cells(cx);
         cx.notify();
     }
 
@@ -2526,6 +2557,7 @@ impl Omdbx {
             }
         }
         self.pending_edits.clear();
+        self.sync_dirty_cells(cx);
         cx.notify();
         if restored == 0 {
             self.show_notice("没有待取消的修改", cx);
@@ -2603,6 +2635,7 @@ impl Omdbx {
                         for key in &saved_keys {
                             this.pending_edits.remove(key);
                         }
+                        this.sync_dirty_cells(cx);
                         this.show_notice(
                             &format!("已保存 {} 处修改", saved_keys.len()),
                             cx,
@@ -3121,6 +3154,7 @@ impl Omdbx {
                             show_comments: this.show_comments,
                             row_offset: 0,
                             editing: None,
+                            dirty: HashSet::new(),
                             weak: None,
                         };
                         this.grid = Some(cx.new(|cx| {
