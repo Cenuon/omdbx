@@ -2166,7 +2166,6 @@ impl Omdbx {
         window.defer(cx, move |window, cx| {
             focused.update(cx, |state, cx| {
                 state.focus_handle(cx).focus(window, cx);
-                state.set_open(true, window, cx);
             });
         });
     }
