@@ -4779,25 +4779,27 @@ impl Omdbx {
 
         let tab = |tab: PropsTab, icon: AssetIcon, label: &'static str| {
             let active = self.props_tab == tab;
-            v_flex()
+            h_flex()
                 .id(format!("props-tab-{label}"))
                 .flex_1()
-                .h_full()
+                .h(px(30.))
                 .items_center()
                 .justify_center()
-                .gap(px(2.))
+                .gap(px(4.))
+                .rounded(px(6.))
                 .cursor_pointer()
+                .text_size(px(11.))
                 .when(active, |this| {
-                    this.text_color(colors.primary)
-                        .border_b_2()
-                        .border_color(colors.primary)
+                    this.bg(colors.primary.opacity(0.10))
+                        .text_color(colors.primary)
+                        .font_weight(FontWeight::MEDIUM)
                 })
                 .when(!active, |this| {
                     this.text_color(muted)
-                        .hover(|style| style.text_color(colors.foreground))
+                        .hover(|style| style.bg(colors.secondary).text_color(colors.foreground))
                 })
-                .child(Icon::new(icon).with_size(px(15.)))
-                .child(div().text_size(px(10.5)).child(label))
+                .child(Icon::new(icon).with_size(px(14.)))
+                .child(div().child(label))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.props_tab = tab;
                     cx.notify();
@@ -5153,24 +5155,10 @@ impl Omdbx {
                 h_flex()
                     .h(px(36.))
                     .flex_none()
-                    .px_3()
-                    .gap_2()
+                    .px_2()
+                    .py(px(3.))
+                    .gap_1()
                     .items_center()
-                    .border_b_1()
-                    .border_color(colors.border)
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("表属性"),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .h(px(58.))
-                    .flex_none()
-                    .px_1()
                     .border_b_1()
                     .border_color(colors.border)
                     .child(tab(PropsTab::Ddl, AssetIcon::Code, "DDL"))
