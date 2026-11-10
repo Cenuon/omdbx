@@ -4792,10 +4792,16 @@ impl Omdbx {
                 .justify_center()
                 .gap(px(4.))
                 .rounded(px(6.))
+                .border_1()
+                .border_color(if active {
+                    accent.opacity(0.28)
+                } else {
+                    gpui_kit::transparent_black()
+                })
                 .cursor_pointer()
                 .text_size(px(11.))
                 .when(active, |this| {
-                    this.bg(accent.opacity(0.10))
+                    this.bg(accent.opacity(0.14))
                         .text_color(accent)
                         .font_weight(FontWeight::MEDIUM)
                 })
