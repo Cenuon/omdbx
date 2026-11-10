@@ -159,6 +159,15 @@ impl Render for FilterDividerDrag {
     }
 }
 
+#[derive(Clone)]
+struct PropsDividerDrag;
+
+impl Render for PropsDividerDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct Connection {
     id: String,
@@ -1871,6 +1880,8 @@ struct Omdbx {
     filter_split: f32,
     filter_bounds: Rc<Cell<gpui_kit::Bounds<gpui_kit::Pixels>>>,
     props_open: bool,
+    props_split: f32,
+    content_bounds: Rc<Cell<gpui_kit::Bounds<gpui_kit::Pixels>>>,
     props_tab: PropsTab,
     props_loading: bool,
     props_error: Option<String>,
@@ -2012,6 +2023,8 @@ impl Omdbx {
             filter_split: 2.0 / 3.0,
             filter_bounds: Rc::new(Cell::new(Default::default())),
             props_open: false,
+            props_split: 0.34,
+            content_bounds: Rc::new(Cell::new(Default::default())),
             props_tab: PropsTab::Ddl,
             props_loading: false,
             props_error: None,
@@ -6234,13 +6247,17 @@ impl Omdbx {
             .when(self.tabs.is_empty() && self.queries.is_empty(), |this| {
                 this.pt(px(8.))
             })
-            .child(
+            .child({
+                let bounds = self.content_bounds.clone();
+                let split = self.props_split;
                 h_flex()
+                    .relative()
                     .size_full()
-                    .gap(px(8.))
+                    .on_prepaint(move |value, _, _| bounds.set(value))
                     .child(
                         v_flex()
-                            .flex_1()
+                            .flex_basis(gpui_kit::relative(0.))
+                            .flex_grow(1.0 - split)
                             .h_full()
                             .min_w_0()
                             .rounded(px(10.))
@@ -6252,10 +6269,47 @@ impl Omdbx {
                     )
                     .when(self.props_open, |this| {
                         this.child(
-                            v_flex()
-                                .w(px(340.))
+                            div()
+                                .id("content-props-split")
+                                .w(px(9.))
                                 .h_full()
                                 .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_col_resize()
+                                .occlude()
+                                .on_drag(PropsDividerDrag, |drag, _, _, cx| {
+                                    cx.stop_propagation();
+                                    cx.new(|_| drag.clone())
+                                })
+                                .on_drag_move(cx.listener(
+                                    |this,
+                                     e: &gpui_kit::DragMoveEvent<PropsDividerDrag>,
+                                     _,
+                                     cx| {
+                                        let bounds = this.content_bounds.get();
+                                        if bounds.size.width > px(0.) {
+                                            let available =
+                                                (bounds.size.width - px(9.)).max(px(1.));
+                                            let ratio = ((bounds.origin.x
+                                                + bounds.size.width
+                                                - e.event.position.x)
+                                                / available)
+                                                .clamp(0.2, 0.5);
+                                            this.props_split = ratio;
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
+                                .child(div().w(px(1.)).h_full().bg(colors.border)),
+                        )
+                        .child(
+                            v_flex()
+                                .flex_basis(gpui_kit::relative(0.))
+                                .flex_grow(split)
+                                .h_full()
+                                .min_w_0()
                                 .rounded(px(10.))
                                 .overflow_hidden()
                                 .bg(colors.background)
@@ -6263,8 +6317,8 @@ impl Omdbx {
                                 .border_color(colors.border)
                                 .child(self.table_props_panel(cx)),
                         )
-                    }),
-            )
+                    })
+            })
     }
 }
 
