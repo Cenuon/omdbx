@@ -4931,6 +4931,30 @@ impl Omdbx {
             .flex_1()
             .h_full()
             .min_w_0()
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                let Some(grid) = this.grid.clone() else {
+                    return;
+                };
+                let editor = grid
+                    .read(cx)
+                    .delegate()
+                    .editing
+                    .as_ref()
+                    .map(|edit| edit.editor.clone());
+                match editor {
+                    Some(CellEditor::Text(input)) => {
+                        this.finish_edit(&grid, &input, cx);
+                    }
+                    Some(_) => {
+                        grid.update(cx, |table, cx| {
+                            table.delegate_mut().editing = None;
+                            cx.notify();
+                        });
+                        cx.notify();
+                    }
+                    None => {}
+                }
+            }))
             // filter bar for table tabs; the query page has its own toolbar
             .when(!self.show_query && self.filters_visible, |this| {
                 this.child(self.table_filter_bar(cx))
