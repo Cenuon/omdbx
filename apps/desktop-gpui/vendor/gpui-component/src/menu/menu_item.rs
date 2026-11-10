@@ -2,7 +2,7 @@ use crate::{ActiveTheme, Disableable, StyledExt, h_flex};
 use gpui::{
     AnyElement, App, ClickEvent, ElementId, InteractiveElement, IntoElement, MouseButton,
     ParentElement, RenderOnce, Role, SharedString, StatefulInteractiveElement as _,
-    StyleRefinement, Styled, Window, accesskit::Toggled, prelude::FluentBuilder as _,
+    StyleRefinement, Styled, Window, accesskit::Toggled, prelude::FluentBuilder as _, px,
 };
 use gpui_base::TestSupportExt as _;
 use smallvec::SmallVec;
@@ -117,7 +117,7 @@ impl RenderOnce for MenuItemElement {
             .gap_x_1()
             .py_1()
             .px_2()
-            .text_base()
+            .text_size(px(13.))
             .text_color(cx.theme().foreground)
             .relative()
             .items_center()
