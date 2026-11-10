@@ -2434,6 +2434,7 @@ impl Omdbx {
                         this.props_editor = Some(cx.new(|cx| {
                             EditorState::new(window, cx)
                                 .language("sql")
+                                .soft_wrap(false)
                                 .default_value(props.ddl.clone())
                         }));
                         this.props = props;
