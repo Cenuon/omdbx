@@ -2241,8 +2241,9 @@ impl Omdbx {
             .clone()
             .unwrap_or_else(|| database.to_string());
         let key = format!("{connection_id}|{database}|{table}");
-        if let Some(index) = self.tabs.iter().position(|tab| tab.key == key) {
+        let tab_index = if let Some(index) = self.tabs.iter().position(|tab| tab.key == key) {
             self.active = Some(index);
+            index
         } else {
             self.tabs.push(Tab {
                 key: key.clone(),
@@ -2252,8 +2253,11 @@ impl Omdbx {
                 schema,
                 table: table.to_string(),
             });
-            self.active = Some(self.tabs.len() - 1);
-        }
+            let index = self.tabs.len() - 1;
+            self.active = Some(index);
+            index
+        };
+        self.tab_scroll.scroll_to_item(tab_index);
         self.props_open = true;
         self.clear_table_filters(window, cx);
         self.load_active(window, cx);
@@ -3548,6 +3552,8 @@ impl Omdbx {
         });
         self.active_query = Some(self.queries.len() - 1);
         self.show_query = true;
+        self.tab_scroll
+            .scroll_to_item(self.tabs.len() + self.queries.len() - 1);
         cx.notify();
     }
 
