@@ -2248,6 +2248,7 @@ impl Omdbx {
             });
             self.active = Some(self.tabs.len() - 1);
         }
+        self.props_open = true;
         self.clear_table_filters(window, cx);
         self.load_active(window, cx);
         self.sync_props_if_open(window, cx);
@@ -6257,7 +6258,7 @@ impl Omdbx {
                     .child(
                         v_flex()
                             .flex_basis(gpui_kit::relative(0.))
-                            .flex_grow(1.0 - split)
+                            .flex_grow(if self.props_open { 1.0 - split } else { 1.0 })
                             .h_full()
                             .min_w_0()
                             .rounded(px(10.))
