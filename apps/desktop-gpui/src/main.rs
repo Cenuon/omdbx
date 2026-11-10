@@ -1880,6 +1880,8 @@ struct Omdbx {
     filter_split: f32,
     filter_bounds: Rc<Cell<gpui_kit::Bounds<gpui_kit::Pixels>>>,
     props_open: bool,
+    props_anim: f32,
+    props_anim_epoch: u64,
     props_split: f32,
     content_bounds: Rc<Cell<gpui_kit::Bounds<gpui_kit::Pixels>>>,
     props_tab: PropsTab,
@@ -2023,6 +2025,8 @@ impl Omdbx {
             filter_split: 2.0 / 3.0,
             filter_bounds: Rc::new(Cell::new(Default::default())),
             props_open: false,
+            props_anim: 0.0,
+            props_anim_epoch: 0,
             props_split: 0.34,
             content_bounds: Rc::new(Cell::new(Default::default())),
             props_tab: PropsTab::Ddl,
@@ -2392,11 +2396,60 @@ impl Omdbx {
 
     fn toggle_props(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.props_open {
-            self.props_open = false;
-            cx.notify();
+            self.animate_props(false, cx);
         } else {
             self.open_props(window, cx);
         }
+    }
+
+    fn close_props(&mut self, cx: &mut Context<Self>) {
+        self.animate_props(false, cx);
+    }
+
+    fn hide_props_now(&mut self, cx: &mut Context<Self>) {
+        self.props_open = false;
+        self.props_anim_epoch = self.props_anim_epoch.wrapping_add(1);
+        self.props_anim = 0.0;
+        cx.notify();
+    }
+
+    fn animate_props(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.props_open = open;
+        let target = if open { 1.0 } else { 0.0 };
+        if (self.props_anim - target).abs() < 0.001 {
+            self.props_anim = target;
+            cx.notify();
+            return;
+        }
+        self.props_anim_epoch = self.props_anim_epoch.wrapping_add(1);
+        let epoch = self.props_anim_epoch;
+        let start = self.props_anim;
+        cx.spawn(async move |weak, cx| {
+            let steps = 12u32;
+            for step in 1..=steps {
+                cx.background_executor()
+                    .timer(Duration::from_millis(16))
+                    .await;
+                let progress = step as f32 / steps as f32;
+                let eased = 1.0 - (1.0 - progress).powi(3);
+                let value = start + (target - start) * eased;
+                let _ = weak.update(cx, |this, cx| {
+                    if this.props_anim_epoch != epoch {
+                        return;
+                    }
+                    this.props_anim = value;
+                    cx.notify();
+                });
+            }
+            let _ = weak.update(cx, |this, cx| {
+                if this.props_anim_epoch != epoch {
+                    return;
+                }
+                this.props_anim = target;
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn open_props(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2413,7 +2466,7 @@ impl Omdbx {
         self.props = TableProps::default();
         self.props_target = Some(tab.key.clone());
         self.props_editor = None;
-        cx.notify();
+        self.animate_props(true, cx);
         let target = tab.key.clone();
         let connection_id = tab.connection_id.clone();
         let database = tab.database.clone();
@@ -3480,7 +3533,7 @@ impl Omdbx {
 
     fn open_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_running_query();
-        self.props_open = false;
+        self.hide_props_now(cx);
         self.next_query += 1;
         let number = self.next_query;
         let editor = cx.new(|cx| {
@@ -3688,7 +3741,7 @@ impl Omdbx {
         self.tabs.remove(index);
         if self.tabs.is_empty() {
             self.cancel_running_query();
-            self.props_open = false;
+            self.hide_props_now(cx);
             self.active = None;
             self.grid = None;
             self.columns.clear();
@@ -3776,7 +3829,7 @@ impl Omdbx {
 
     fn close_all_tabs(&mut self, cx: &mut Context<Self>) {
         self.cancel_running_query();
-        self.props_open = false;
+        self.hide_props_now(cx);
         self.tabs.clear();
         self.queries.clear();
         self.active = None;
@@ -5111,15 +5164,9 @@ impl Omdbx {
                     )
                     .child(Self::icon_button(
                         "props-close",
-                        Icon::new(AssetIcon::X)
-                            .with_size(px(14.))
-                            .text_color(muted)
-                            .into_any_element(),
+                        Self::props_glyph(true, muted).into_any_element(),
                         colors,
-                        cx.listener(|this, _, _, cx| {
-                            this.props_open = false;
-                            cx.notify();
-                        }),
+                        cx.listener(|this, _, _, cx| this.close_props(cx)),
                     )),
             )
             .child(
@@ -5285,7 +5332,7 @@ impl Omdbx {
             )
             .child(Self::icon_button(
                 "table-props",
-                Icon::new(AssetIcon::PanelRightOpen)
+                Icon::new(AssetIcon::TableProperties)
                     .with_size(px(16.))
                     .text_color(colors.foreground)
                     .into_any_element(),
@@ -6073,6 +6120,7 @@ impl Omdbx {
                         }
                         CloseTarget::Query(index) => {
                             this.cancel_running_query();
+                            this.hide_props_now(cx);
                             this.show_query = true;
                             this.active_query = Some(index);
                             cx.notify();
@@ -6223,6 +6271,21 @@ impl Omdbx {
         }
     }
 
+    fn props_glyph(open: bool, color: Hsla) -> impl IntoElement {
+        let frame = div()
+            .w(px(14.))
+            .h(px(14.))
+            .flex_none()
+            .rounded(px(2.))
+            .border_1()
+            .border_color(color);
+        if open {
+            frame.child(div().h_full().w(px(1.)).ml(px(8.)).bg(color))
+        } else {
+            frame.child(div().h_full().w(px(4.)).ml(px(8.)).bg(color))
+        }
+    }
+
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> gpui_kit::Stateful<gpui_kit::Div> {
         let colors = cx.theme().colors;
         Self::icon_button(
@@ -6251,7 +6314,12 @@ impl Omdbx {
             })
             .child({
                 let bounds = self.content_bounds.clone();
-                let split = self.props_split;
+                let split = self.props_split * self.props_anim;
+                let main_grow = if self.props_anim > 0.0 {
+                    1.0 - split
+                } else {
+                    1.0
+                };
                 h_flex()
                     .relative()
                     .size_full()
@@ -6259,7 +6327,7 @@ impl Omdbx {
                     .child(
                         v_flex()
                             .flex_basis(gpui_kit::relative(0.))
-                            .flex_grow(if self.props_open { 1.0 - split } else { 1.0 })
+                            .flex_grow(main_grow)
                             .h_full()
                             .min_w_0()
                             .rounded(px(10.))
@@ -6269,11 +6337,11 @@ impl Omdbx {
                             .border_color(colors.border)
                             .child(self.main_pane(cx)),
                     )
-                    .when(self.props_open, |this| {
+                    .when(self.props_anim > 0.0, |this| {
                         this.child(
                             div()
                                 .id("content-props-split")
-                                .w(px(9.))
+                                .w(px(9. * self.props_anim))
                                 .h_full()
                                 .flex_none()
                                 .flex()
@@ -6311,6 +6379,7 @@ impl Omdbx {
                                 .flex_grow(split)
                                 .h_full()
                                 .min_w_0()
+                                .opacity(self.props_anim)
                                 .rounded(px(10.))
                                 .overflow_hidden()
                                 .bg(colors.background)
