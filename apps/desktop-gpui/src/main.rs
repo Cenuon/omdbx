@@ -5161,13 +5161,7 @@ impl Omdbx {
                             .text_size(px(13.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("表属性"),
-                    )
-                    .child(Self::icon_button(
-                        "props-close",
-                        Self::props_glyph(true, muted).into_any_element(),
-                        colors,
-                        cx.listener(|this, _, _, cx| this.close_props(cx)),
-                    )),
+                    ),
             )
             .child(
                 h_flex()
@@ -5960,6 +5954,15 @@ impl Omdbx {
                                 window.start_window_move()
                             }),
                     )
+                    .when(!self.show_query && self.active.is_some(), |this| {
+                        this.child(Self::icon_button(
+                            "props-toggle-top",
+                            Self::props_glyph(self.props_open, colors.muted_foreground)
+                                .into_any_element(),
+                            colors,
+                            cx.listener(|this, _, window, cx| this.toggle_props(window, cx)),
+                        ))
+                    })
     }
 
     fn main_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
