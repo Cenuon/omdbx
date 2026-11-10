@@ -305,6 +305,7 @@ fn fetch_rows(
     where_clause: &str,
     order_clause: &str,
     row_offset: usize,
+    execution_id: Option<&str>,
 ) -> Result<TableData, String> {
     let sql = select_sql(connection, table, where_clause, order_clause);
     let fetch = ROW_LIMIT + 1;
@@ -332,7 +333,7 @@ fn fetch_rows(
         }
         _ => format!("{sql} LIMIT {fetch} OFFSET {row_offset}"),
     };
-    let mut data = run_sql(connection, database, schema, &sql, fetch)?;
+    let mut data = run_sql(connection, database, schema, &sql, fetch, execution_id)?;
     let has_more = data.rows.len() > ROW_LIMIT;
     data.rows.truncate(ROW_LIMIT);
     data.has_more = has_more;
@@ -368,7 +369,7 @@ fn fetch_all_rows(
     order_clause: &str,
 ) -> Result<TableData, String> {
     let sql = select_sql(connection, table, where_clause, order_clause);
-    let mut data = run_sql(connection, database, schema, &sql, EXPORT_MAX_ROWS + 1)?;
+    let mut data = run_sql(connection, database, schema, &sql, EXPORT_MAX_ROWS + 1, None)?;
     if data.rows.len() > EXPORT_MAX_ROWS {
         data.rows.truncate(EXPORT_MAX_ROWS);
     }
@@ -381,17 +382,19 @@ fn run_sql(
     schema: &str,
     sql: &str,
     max_rows: usize,
+    execution_id: Option<&str>,
 ) -> Result<TableData, String> {
-    let value = post_json(
-        &format!("{API}/api/query/execute"),
-        &json!({
-            "connectionId": connection.id,
-            "database": database,
-            "schema": schema,
-            "sql": sql,
-            "maxRows": max_rows,
-        }),
-    )?;
+    let mut payload = json!({
+        "connectionId": connection.id,
+        "database": database,
+        "schema": schema,
+        "sql": sql,
+        "maxRows": max_rows,
+    });
+    if let Some(execution_id) = execution_id {
+        payload["executionId"] = json!(execution_id);
+    }
+    let value = post_json(&format!("{API}/api/query/execute"), &payload)?;
     let columns = value
         .get("columns")
         .and_then(|columns| columns.as_array())
@@ -1542,6 +1545,8 @@ struct Omdbx {
     columns: Vec<String>,
     rows: Vec<Vec<String>>,
     loading: bool,
+    running_query: Option<String>,
+    cancel_requested: Option<String>,
     grid: Option<Entity<TableState<GridDelegate>>>,
     queries: Vec<QueryTab>,
     active_query: Option<usize>,
@@ -1667,6 +1672,8 @@ impl Omdbx {
             columns: Vec::new(),
             rows: Vec::new(),
             loading: false,
+            running_query: None,
+            cancel_requested: None,
             grid: None,
             queries: Vec::new(),
             active_query: None,
@@ -1920,84 +1927,141 @@ impl Omdbx {
         else {
             return;
         };
+        if let Some(previous) = self.running_query.take() {
+            Self::cancel_query_id(previous);
+        }
         self.loading = true;
+        let execution_id = uuid::Uuid::new_v4().to_string();
+        self.running_query = Some(execution_id.clone());
+        self.cancel_requested = None;
         cx.notify();
         let where_clause = self.table_where.read(cx).value().trim().to_string();
         let order_clause = self.table_order.read(cx).value().trim().to_string();
         let row_offset = self.table_page.saturating_sub(1) * ROW_LIMIT;
-        match fetch_rows(
-            &connection,
-            &tab.database,
-            &tab.schema,
-            &tab.table,
-            &where_clause,
-            &order_clause,
-            row_offset,
-        ) {
-            Ok(data) => {
-                let table_meta = fetch_columns(
-                    &tab.connection_id,
-                    &tab.database,
-                    &tab.schema,
-                    &tab.table,
-                )
-                .unwrap_or_default();
-                let meta: Vec<ColumnMeta> = data
-                    .columns
-                    .iter()
-                    .map(|name| {
-                        table_meta
-                            .iter()
-                            .find(|item| &item.name == name)
-                            .cloned()
-                            .unwrap_or_default()
-                    })
-                    .collect();
-                self.column_meta = meta.clone();
-                let delegate = GridDelegate {
-                    columns: data.columns.clone(),
-                    rows: data.rows.clone(),
-                    meta,
-                    show_comments: self.show_comments,
-                    row_offset,
-                    editing: None,
-                    weak: Some(cx.entity().downgrade()),
-                };
-                self.grid = Some(cx.new(|cx| {
-                    TableState::new(delegate, window, cx)
-                        .col_resizable(false)
-                        .cell_selectable(true)
-                        .row_header(false)
-                }));
-                if let Some(grid) = self.grid.clone() {
-                    cx.subscribe_in(
-                        &grid,
-                        window,
-                        |this, grid, event: &TableEvent, window, cx| {
-                            if let TableEvent::DoubleClickedCell(row, col) = event {
-                                this.begin_cell_edit(*row, *col, grid, window, cx);
-                            }
-                        },
-                    )
-                    .detach();
+        let task_id = execution_id.clone();
+        let task = cx.background_executor().spawn(async move {
+            let data = fetch_rows(
+                &connection,
+                &tab.database,
+                &tab.schema,
+                &tab.table,
+                &where_clause,
+                &order_clause,
+                row_offset,
+                Some(&task_id),
+            )?;
+            let table_meta = fetch_columns(
+                &tab.connection_id,
+                &tab.database,
+                &tab.schema,
+                &tab.table,
+            )
+            .unwrap_or_default();
+            Ok::<(TableData, Vec<ColumnMeta>), String>((data, table_meta))
+        });
+        cx.spawn_in(window, async move |weak, cx| {
+            let result = task.await;
+            let _ = weak.update_in(cx, |this, window, cx| {
+                if this.running_query.as_deref() != Some(execution_id.as_str()) {
+                    return;
                 }
-                self.columns = data.columns;
-                self.rows = data.rows;
-                self.table_has_more = data.has_more;
-                self.error = None;
-            }
-            Err(message) => {
-                self.grid = None;
-                self.columns = Vec::new();
-                self.rows = Vec::new();
-                self.table_has_more = false;
-                self.error = Some(message);
-            }
-        }
-        self.loading = false;
-        cx.notify();
+                let cancelled =
+                    this.cancel_requested.as_deref() == Some(execution_id.as_str());
+                this.running_query = None;
+                this.cancel_requested = None;
+                this.loading = false;
+                match result {
+                    Ok((data, table_meta)) => {
+                        let meta: Vec<ColumnMeta> = data
+                            .columns
+                            .iter()
+                            .map(|name| {
+                                table_meta
+                                    .iter()
+                                    .find(|item| &item.name == name)
+                                    .cloned()
+                                    .unwrap_or_default()
+                            })
+                            .collect();
+                        this.column_meta = meta.clone();
+                        let delegate = GridDelegate {
+                            columns: data.columns.clone(),
+                            rows: data.rows.clone(),
+                            meta,
+                            show_comments: this.show_comments,
+                            row_offset,
+                            editing: None,
+                            weak: Some(cx.entity().downgrade()),
+                        };
+                        this.grid = Some(cx.new(|cx| {
+                            TableState::new(delegate, window, cx)
+                                .col_resizable(false)
+                                .cell_selectable(true)
+                                .row_header(false)
+                        }));
+                        if let Some(grid) = this.grid.clone() {
+                            cx.subscribe_in(
+                                &grid,
+                                window,
+                                |this, grid, event: &TableEvent, window, cx| {
+                                    if let TableEvent::DoubleClickedCell(row, col) = event {
+                                        this.begin_cell_edit(*row, *col, grid, window, cx);
+                                    }
+                                },
+                            )
+                            .detach();
+                        }
+                        this.columns = data.columns;
+                        this.rows = data.rows;
+                        this.table_has_more = data.has_more;
+                        this.error = None;
+                    }
+                    Err(message) => {
+                        if cancelled {
+                            this.show_notice("已停止查询", cx);
+                        } else {
+                            this.grid = None;
+                            this.columns = Vec::new();
+                            this.rows = Vec::new();
+                            this.table_has_more = false;
+                            this.error = Some(message);
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
+    fn stop_query(&mut self, cx: &mut Context<Self>) {
+        let Some(execution_id) = self.running_query.clone() else {
+            return;
+        };
+        if self.cancel_requested.as_deref() == Some(execution_id.as_str()) {
+            return;
+        }
+        self.cancel_requested = Some(execution_id.clone());
+        Self::cancel_query_id(execution_id);
+        self.show_notice("正在停止查询", cx);
+    }
+
+    fn cancel_running_query(&mut self) {
+        if let Some(execution_id) = self.running_query.take() {
+            Self::cancel_query_id(execution_id);
+        }
+        self.cancel_requested = None;
+        self.loading = false;
+    }
+
+    fn cancel_query_id(execution_id: String) {
+        std::thread::spawn(move || {
+            let _ = post_json(
+                &format!("{API}/api/query/cancel"),
+                &json!({ "executionId": execution_id }),
+            );
+        });
+    }
 
     fn begin_cell_edit(
         &mut self,
@@ -2440,7 +2504,7 @@ impl Omdbx {
         self.saving = true;
         let task = cx.background_executor().spawn(async move {
             for sql in statements {
-                run_sql(&connection, &database, &schema, &sql, 1)?;
+                run_sql(&connection, &database, &schema, &sql, 1, None)?;
             }
             Ok::<(), String>(())
         });
@@ -2833,6 +2897,7 @@ impl Omdbx {
     }
 
     fn open_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_running_query();
         self.next_query += 1;
         let number = self.next_query;
         let editor = cx.new(|cx| {
@@ -2894,66 +2959,108 @@ impl Omdbx {
             cx.notify();
             return;
         };
+        if let Some(previous) = self.running_query.take() {
+            Self::cancel_query_id(previous);
+        }
         self.loading = true;
+        let execution_id = uuid::Uuid::new_v4().to_string();
+        self.running_query = Some(execution_id.clone());
+        self.cancel_requested = None;
         cx.notify();
         let started = std::time::Instant::now();
-        match run_sql(&connection, &database, &schema, &sql, ROW_LIMIT) {
-            Ok(data) => {
-                let mut schema_columns: Vec<ColumnMeta> = Vec::new();
-                for table in sql_tables(&sql) {
-                    if let Ok(columns) =
-                        fetch_columns(&connection.id, &database, &schema, &table)
-                    {
-                        for column in columns {
-                            if !schema_columns.iter().any(|item| item.name == column.name) {
-                                schema_columns.push(column);
-                            }
+        let task_id = execution_id.clone();
+        let sql_for_tables = sql.clone();
+        let task = cx.background_executor().spawn(async move {
+            let data = run_sql(
+                &connection,
+                &database,
+                &schema,
+                &sql,
+                ROW_LIMIT,
+                Some(&task_id),
+            )?;
+            let mut schema_columns: Vec<ColumnMeta> = Vec::new();
+            for table in sql_tables(&sql_for_tables) {
+                if let Ok(columns) =
+                    fetch_columns(&connection.id, &database, &schema, &table)
+                {
+                    for column in columns {
+                        if !schema_columns.iter().any(|item| item.name == column.name) {
+                            schema_columns.push(column);
                         }
                     }
                 }
-                let meta: Vec<ColumnMeta> = data
-                    .columns
-                    .iter()
-                    .enumerate()
-                    .map(|(index, name)| {
-                        let mut column = schema_columns
+            }
+            Ok::<(TableData, Vec<ColumnMeta>), String>((data, schema_columns))
+        });
+        cx.spawn_in(window, async move |weak, cx| {
+            let result = task.await;
+            let _ = weak.update_in(cx, |this, window, cx| {
+                if this.running_query.as_deref() != Some(execution_id.as_str()) {
+                    return;
+                }
+                let cancelled =
+                    this.cancel_requested.as_deref() == Some(execution_id.as_str());
+                this.running_query = None;
+                this.cancel_requested = None;
+                this.loading = false;
+                match result {
+                    Ok((data, schema_columns)) => {
+                        let meta: Vec<ColumnMeta> = data
+                            .columns
                             .iter()
-                            .find(|item| &item.name == name)
-                            .cloned()
-                            .unwrap_or_default();
-                        column.name = name.clone();
-                        if column.data_type.is_empty() {
-                            column.data_type =
-                                data.column_types.get(index).cloned().unwrap_or_default();
+                            .enumerate()
+                            .map(|(index, name)| {
+                                let mut column = schema_columns
+                                    .iter()
+                                    .find(|item| &item.name == name)
+                                    .cloned()
+                                    .unwrap_or_default();
+                                column.name = name.clone();
+                                if column.data_type.is_empty() {
+                                    column.data_type = data
+                                        .column_types
+                                        .get(index)
+                                        .cloned()
+                                        .unwrap_or_default();
+                                }
+                                column
+                            })
+                            .collect();
+                        this.column_meta = meta.clone();
+                        let delegate = GridDelegate {
+                            columns: data.columns.clone(),
+                            rows: data.rows.clone(),
+                            meta,
+                            show_comments: this.show_comments,
+                            row_offset: 0,
+                            editing: None,
+                            weak: None,
+                        };
+                        this.grid = Some(cx.new(|cx| {
+                            TableState::new(delegate, window, cx).col_resizable(false)
+                        }));
+                        this.columns = data.columns;
+                        this.rows = data.rows;
+                        this.error = None;
+                        this.query_ms = Some(started.elapsed().as_millis());
+                    }
+                    Err(message) => {
+                        if cancelled {
+                            this.show_notice("已停止查询", cx);
+                        } else {
+                            this.grid = None;
+                            this.columns = Vec::new();
+                            this.rows = Vec::new();
+                            this.error = Some(message);
                         }
-                        column
-                    })
-                    .collect();
-                self.column_meta = meta.clone();
-                let delegate = GridDelegate {
-                    columns: data.columns.clone(),
-                    rows: data.rows.clone(),
-                    meta,
-                    show_comments: self.show_comments,
-                    row_offset: 0,
-                    editing: None,
-                    weak: None,
-                };
-                self.grid = Some(cx.new(|cx| TableState::new(delegate, window, cx).col_resizable(false)));
-                self.columns = data.columns;
-                self.rows = data.rows;
-                self.error = None;
-            }
-            Err(message) => {
-                self.grid = None;
-                self.columns = Vec::new();
-                self.rows = Vec::new();
-                self.error = Some(message);
-            }
-        }
-        self.query_ms = Some(started.elapsed().as_millis());
-        self.loading = false;
-        cx.notify();
+                        this.query_ms = None;
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn close_query(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -2994,6 +3101,7 @@ impl Omdbx {
         }
         self.tabs.remove(index);
         if self.tabs.is_empty() {
+            self.cancel_running_query();
             self.active = None;
             self.grid = None;
             self.columns.clear();
@@ -3079,6 +3187,7 @@ impl Omdbx {
     }
 
     fn close_all_tabs(&mut self, cx: &mut Context<Self>) {
+        self.cancel_running_query();
         self.tabs.clear();
         self.queries.clear();
         self.active = None;
@@ -4135,6 +4244,18 @@ impl Omdbx {
         let muted = colors.muted_foreground;
         let page = self.table_page;
         let icon_size = px(15.);
+        let dirty = !self.pending_edits.is_empty();
+        let running = self.loading && self.running_query.is_some();
+        let save_color = if dirty {
+            gpui_kit::rgb(0x2F9E44).into()
+        } else {
+            muted
+        };
+        let cancel_color = if dirty {
+            gpui_kit::rgb(0xE03131).into()
+        } else {
+            muted
+        };
 
         h_flex()
             .h(px(34.))
@@ -4163,22 +4284,24 @@ impl Omdbx {
                 colors,
                 cx.listener(|this, _, _, cx| this.show_notice("删除行未完成", cx)),
             ))
-            .child(Self::icon_button(
+            .child(Self::action_button(
                 "row-save",
                 Icon::new(AssetIcon::Check)
                     .with_size(icon_size)
-                    .text_color(muted)
+                    .text_color(save_color)
                     .into_any_element(),
+                dirty,
                 colors,
                 cx.listener(|this, _, _, cx| this.save_pending_edits(cx)),
             ))
-            .child(Self::icon_button(
+            .child(Self::action_button(
                 "row-cancel",
                 div()
                     .text_size(px(14.))
-                    .text_color(muted)
+                    .text_color(cancel_color)
                     .child("✕")
                     .into_any_element(),
+                dirty,
                 colors,
                 cx.listener(|this, _, _, cx| this.cancel_pending_edits(cx)),
             ))
@@ -4191,16 +4314,17 @@ impl Omdbx {
                 colors,
                 cx.listener(|this, _, window, cx| this.load_active(window, cx)),
             ))
-            .child(Self::icon_button(
+            .child(Self::action_button(
                 "stop-query",
                 div()
                     .w(px(11.))
                     .h(px(11.))
                     .rounded(px(2.))
-                    .bg(muted)
+                    .bg(if running { colors.foreground } else { muted })
                     .into_any_element(),
+                running,
                 colors,
-                cx.listener(|this, _, _, cx| this.show_notice("停止执行未完成", cx)),
+                cx.listener(|this, _, _, cx| this.stop_query(cx)),
             ))
             .child(div().flex_1())
             .child(Self::icon_button(
@@ -4384,6 +4508,7 @@ impl Omdbx {
             .and_then(|index| self.queries.get(index))
             .map(|query| query.editor.clone());
         let rows = self.rows.len();
+        let running = self.loading && self.running_query.is_some();
         let elapsed = if self.loading {
             "执行中…".to_string()
         } else {
@@ -4463,7 +4588,19 @@ impl Omdbx {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.run_query(window, cx)
                             })),
-                    ),
+                    )
+                    .child(Self::action_button(
+                        "query-stop",
+                        div()
+                            .w(px(11.))
+                            .h(px(11.))
+                            .rounded(px(2.))
+                            .bg(if running { colors.foreground } else { muted })
+                            .into_any_element(),
+                        running,
+                        colors,
+                        cx.listener(|this, _, _, cx| this.stop_query(cx)),
+                    )),
             )
             // editor
             .child(
@@ -4798,6 +4935,7 @@ impl Omdbx {
                             this.load_active(window, cx);
                         }
                         CloseTarget::Query(index) => {
+                            this.cancel_running_query();
                             this.show_query = true;
                             this.active_query = Some(index);
                             cx.notify();
@@ -4885,6 +5023,32 @@ fn split_handle() -> ResizeHandleRenderer {
 impl Omdbx {
     /// One square icon button: both titlebar buttons go through this so their
     /// hit area, radius and hover fill cannot drift apart.
+    fn action_button(
+        id: &'static str,
+        child: gpui_kit::AnyElement,
+        enabled: bool,
+        colors: gpui_kit::component::ThemeColor,
+        on_click: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> gpui_kit::Stateful<gpui_kit::Div> {
+        let button = h_flex()
+            .id(id)
+            .h(px(28.))
+            .w(px(28.))
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .child(child);
+        if enabled {
+            button
+                .cursor_pointer()
+                .hover(|style| style.bg(colors.secondary_active))
+                .on_click(on_click)
+        } else {
+            button.opacity(0.35).cursor_default()
+        }
+    }
+
     fn icon_button(
         id: &'static str,
         child: gpui_kit::AnyElement,
