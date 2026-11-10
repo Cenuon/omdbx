@@ -1893,6 +1893,7 @@ struct Omdbx {
     language: String,
     focus_handle: FocusHandle,
     tree_scroll: ScrollHandle,
+    tab_scroll: ScrollHandle,
     tree_row_count: std::cell::Cell<usize>,
     table_where: Entity<InputState>,
     table_order: Entity<InputState>,
@@ -2038,6 +2039,7 @@ impl Omdbx {
             language,
             focus_handle: cx.focus_handle(),
             tree_scroll: ScrollHandle::new(),
+            tab_scroll: ScrollHandle::new(),
             tree_row_count: std::cell::Cell::new(0),
             table_where,
             table_order,
@@ -2400,10 +2402,6 @@ impl Omdbx {
         } else {
             self.open_props(window, cx);
         }
-    }
-
-    fn close_props(&mut self, cx: &mut Context<Self>) {
-        self.animate_props(false, cx);
     }
 
     fn hide_props_now(&mut self, cx: &mut Context<Self>) {
@@ -5909,7 +5907,17 @@ impl Omdbx {
             })
             .when(!leading_toggle, |this| this.pl(px(12.)))
             .pr(px(12.))
-            .children(self.tabs.iter().enumerate().map(|(index, item)| {
+            .child(
+                h_flex()
+                    .id("tab-scroll")
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .items_center()
+                    .gap_1()
+                    .overflow_x_scroll()
+                    .track_scroll(&self.tab_scroll)
+                    .children(self.tabs.iter().enumerate().map(|(index, item)| {
                         let is_active = Some(index) == self.active && !self.show_query;
                         let title = item.title.clone();
                         let close_index = index;
@@ -5935,15 +5943,6 @@ impl Omdbx {
                             cx,
                         )
                     }))
-                    .child(Self::icon_button(
-                        "new-query",
-                        Icon::new(AssetIcon::Plus)
-                            .with_size(px(16.))
-                            .text_color(colors.muted_foreground)
-                            .into_any_element(),
-                        colors,
-                        cx.listener(|this, _, window, cx| this.open_query(window, cx)),
-                    ))
                     // the empty strip after the tabs drags the window, like a titlebar
                     .child(
                         div()
@@ -5953,16 +5952,26 @@ impl Omdbx {
                             .on_mouse_down(MouseButton::Left, |_, window, _| {
                                 window.start_window_move()
                             }),
-                    )
-                    .when(!self.show_query && self.active.is_some(), |this| {
-                        this.child(Self::icon_button(
-                            "props-toggle-top",
-                            Self::props_glyph(self.props_open, colors.muted_foreground)
-                                .into_any_element(),
-                            colors,
-                            cx.listener(|this, _, window, cx| this.toggle_props(window, cx)),
-                        ))
-                    })
+                    ),
+            )
+            .child(Self::icon_button(
+                "new-query",
+                Icon::new(AssetIcon::Plus)
+                    .with_size(px(16.))
+                    .text_color(colors.muted_foreground)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, window, cx| this.open_query(window, cx)),
+            ))
+            .when(!self.show_query && self.active.is_some(), |this| {
+                this.child(Self::icon_button(
+                    "props-toggle-top",
+                    Self::props_glyph(self.props_open, colors.muted_foreground)
+                        .into_any_element(),
+                    colors,
+                    cx.listener(|this, _, window, cx| this.toggle_props(window, cx)),
+                ))
+            })
     }
 
     fn main_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
