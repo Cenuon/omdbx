@@ -1222,7 +1222,7 @@ fn cell_context_menu(
     column: String,
     value: String,
 ) -> PopupMenu {
-    let mut menu = menu;
+    let mut menu = menu.text_size(px(13.));
 
     let setter = weak.clone();
     menu = menu.item(
@@ -5066,7 +5066,7 @@ impl Omdbx {
             }
         }
         chip.context_menu(move |menu, _, _| {
-            let mut menu = menu;
+            let mut menu = menu.text_size(px(13.));
             if let Some(target) = close {
                 let weak_close = weak.clone();
                 menu = menu.item(PopupMenuItem::new("关闭").on_click(move |_, window, cx| {

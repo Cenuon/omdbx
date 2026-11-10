@@ -11,3 +11,6 @@ under the real input (caret and selection stay visible).
 
 Added the missing `DatePicker.time` translations for `zh-TW` and `it`,
 so the time label follows the selected locale in every bundled language.
+
+Added `PopupMenu::text_size`, inherited by submenus, so the table-cell and
+tab right-click menus can use 13px text while regular popup menus stay at 16px.

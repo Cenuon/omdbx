@@ -17,6 +17,7 @@ pub(crate) struct MenuItemElement {
     checked: Option<bool>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
+    text_size: Option<gpui::Pixels>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -33,6 +34,7 @@ impl MenuItemElement {
             checked: None,
             on_click: None,
             on_hover: None,
+            text_size: None,
             children: SmallVec::new(),
         }
     }
@@ -54,6 +56,12 @@ impl MenuItemElement {
     /// Set the accessible label for the menu item.
     pub(crate) fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Override this item's text size, falling back to the menu default.
+    pub(crate) fn text_size(mut self, size: impl Into<gpui::Pixels>) -> Self {
+        self.text_size = Some(size.into());
         self
     }
 
@@ -117,7 +125,8 @@ impl RenderOnce for MenuItemElement {
             .gap_x_1()
             .py_1()
             .px_2()
-            .text_base()
+            .when_some(self.text_size, |this, size| this.text_size(size))
+            .when(self.text_size.is_none(), |this| this.text_base())
             .text_color(cx.theme().foreground)
             .relative()
             .items_center()

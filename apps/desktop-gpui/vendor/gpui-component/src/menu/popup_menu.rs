@@ -298,6 +298,7 @@ pub struct PopupMenu {
     min_width: Option<Pixels>,
     max_width: Option<Pixels>,
     max_height: Option<Pixels>,
+    text_size: Option<Pixels>,
     bounds: Bounds<Pixels>,
     size: Size,
     check_side: Side,
@@ -347,6 +348,7 @@ impl PopupMenu {
             min_width: None,
             max_width: None,
             max_height: None,
+            text_size: None,
             check_side: Side::Left,
             checkable: HashSet::new(),
             bounds: Bounds::default(),
@@ -445,6 +447,12 @@ impl PopupMenu {
     }
 
     /// Set max height of the popup menu, default is half of the window height
+    /// Override the text size for every item in this menu and its submenus.
+    pub fn text_size(mut self, size: impl Into<Pixels>) -> Self {
+        self.text_size = Some(size.into());
+        self
+    }
+
     pub fn max_h(mut self, height: impl Into<Pixels>) -> Self {
         self.max_height = Some(height.into());
         self
@@ -722,9 +730,13 @@ impl PopupMenu {
         let submenu = PopupMenu::build(window, cx, f);
         let parent_menu = cx.entity().downgrade();
         let parent_priority = self.priority;
+        let parent_text_size = self.text_size;
         submenu.update(cx, |view, _| {
             view.parent_menu = Some(parent_menu);
             view.priority = parent_priority + 1;
+            if view.text_size.is_none() {
+                view.text_size = parent_text_size;
+            }
         });
 
         self.menu_items.push(
@@ -1286,6 +1298,7 @@ impl PopupMenu {
         let this = MenuItemElement::new(ix)
             .relative()
             .text_sm()
+            .when_some(self.text_size, |this, size| this.text_size(size))
             .py_0()
             .px(INNER_PADDING)
             .rounded(radius)
