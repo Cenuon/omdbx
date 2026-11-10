@@ -2738,6 +2738,11 @@ where
             .test_support()
             .size_full()
             .overflow_hidden()
+            .when(self.options.scrollbar_visible.bottom, |this| {
+                // Reserve the horizontal scrollbar's own band so it never
+                // covers the last row's hit area.
+                this.pb(Scrollbar::width())
+            })
             .child(self.render_table_header(left_columns_count, window, cx))
             .context_menu({
                 let view = cx.entity().clone();
