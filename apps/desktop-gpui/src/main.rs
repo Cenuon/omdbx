@@ -1894,6 +1894,7 @@ struct Omdbx {
     focus_handle: FocusHandle,
     tree_scroll: ScrollHandle,
     tab_scroll: ScrollHandle,
+    props_tab_scroll: ScrollHandle,
     tree_row_count: std::cell::Cell<usize>,
     table_where: Entity<InputState>,
     table_order: Entity<InputState>,
@@ -2040,6 +2041,7 @@ impl Omdbx {
             focus_handle: cx.focus_handle(),
             tree_scroll: ScrollHandle::new(),
             tab_scroll: ScrollHandle::new(),
+            props_tab_scroll: ScrollHandle::new(),
             tree_row_count: std::cell::Cell::new(0),
             table_where,
             table_order,
@@ -4777,11 +4779,14 @@ impl Omdbx {
                 .child(text)
         };
 
+        let accent: Hsla = gpui_kit::rgb(0x2F6BFF).into();
         let tab = |tab: PropsTab, icon: AssetIcon, label: &'static str| {
             let active = self.props_tab == tab;
+            let fg = if active { accent } else { muted };
             h_flex()
                 .id(format!("props-tab-{label}"))
-                .flex_1()
+                .w(px(64.))
+                .flex_none()
                 .h(px(30.))
                 .items_center()
                 .justify_center()
@@ -4790,16 +4795,16 @@ impl Omdbx {
                 .cursor_pointer()
                 .text_size(px(11.))
                 .when(active, |this| {
-                    this.bg(colors.primary.opacity(0.10))
-                        .text_color(colors.primary)
+                    this.bg(accent.opacity(0.10))
+                        .text_color(accent)
                         .font_weight(FontWeight::MEDIUM)
                 })
                 .when(!active, |this| {
                     this.text_color(muted)
                         .hover(|style| style.bg(colors.secondary).text_color(colors.foreground))
                 })
-                .child(Icon::new(icon).with_size(px(14.)))
-                .child(div().child(label))
+                .child(Icon::new(icon).with_size(px(14.)).text_color(fg))
+                .child(div().text_color(fg).child(label))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.props_tab = tab;
                     cx.notify();
@@ -5153,12 +5158,15 @@ impl Omdbx {
             .size_full()
             .child(
                 h_flex()
+                    .id("props-tab-scroll")
                     .h(px(36.))
                     .flex_none()
                     .px_2()
                     .py(px(3.))
                     .gap_1()
                     .items_center()
+                    .overflow_x_scroll()
+                    .track_scroll(&self.props_tab_scroll)
                     .border_b_1()
                     .border_color(colors.border)
                     .child(tab(PropsTab::Ddl, AssetIcon::Code, "DDL"))
