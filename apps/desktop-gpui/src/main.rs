@@ -42,6 +42,76 @@ gpui_kit::actions!(omdbx, [RefreshConnections, ConfirmTab, ConfirmEnter, Suggest
 
 const API: &str = "http://127.0.0.1:4225";
 const ROW_LIMIT: usize = 1000;
+
+const SUPPORTED_LANGUAGES: [(&str, &str); 7] = [
+    ("zh-CN", "简体中文"),
+    ("zh-TW", "繁體中文（台灣）"),
+    ("zh-HK", "繁體中文（香港）"),
+    ("en", "English"),
+    ("pt-BR", "Português (Brasil)"),
+    ("ru", "Русский"),
+    ("it", "Italiano"),
+];
+
+fn default_language() -> String {
+    "zh-CN".to_string()
+}
+
+#[derive(Deserialize)]
+struct AppSettings {
+    #[serde(default = "default_language")]
+    language: String,
+}
+
+fn settings_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join("Library/Application Support/omdbx-gpui/settings.json"))
+}
+
+fn load_language() -> String {
+    let Some(text) = settings_path().and_then(|path| std::fs::read_to_string(path).ok()) else {
+        return default_language();
+    };
+    let settings: AppSettings = serde_json::from_str(&text).unwrap_or(AppSettings {
+        language: default_language(),
+    });
+    if SUPPORTED_LANGUAGES
+        .iter()
+        .any(|(code, _)| *code == settings.language)
+    {
+        settings.language
+    } else {
+        default_language()
+    }
+}
+
+fn save_language(language: &str) {
+    let Some(path) = settings_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(
+        path,
+        serde_json::to_string_pretty(&json!({ "language": language })).unwrap_or_default(),
+    );
+}
+
+fn date_picker_format(language: &str, with_time: bool) -> String {
+    let date = match language {
+        "en" => "%m/%d/%Y",
+        "pt-BR" | "it" => "%d/%m/%Y",
+        "ru" => "%d.%m.%Y",
+        _ => "%Y-%m-%d",
+    };
+    if with_time {
+        format!("{date} %H:%M:%S")
+    } else {
+        date.to_string()
+    }
+}
+
 /// Upper bound for a whole-table export; the sidecar keeps the rest of the
 /// table out of the response.
 const EXPORT_MAX_ROWS: usize = 1_000_000;
@@ -1566,6 +1636,7 @@ struct Omdbx {
     update: Option<UpdateInfo>,
     search_open: bool,
     filters_visible: bool,
+    language: String,
     focus_handle: FocusHandle,
     tree_scroll: ScrollHandle,
     tree_row_count: std::cell::Cell<usize>,
@@ -1585,6 +1656,8 @@ struct Omdbx {
 
 impl Omdbx {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let language = load_language();
+        gpui_kit::component::set_locale(&language);
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索连接或表"));
         let table_where = cx.new(|cx| InputState::new(window, cx));
         let table_order = cx.new(|cx| InputState::new(window, cx));
@@ -1693,6 +1766,7 @@ impl Omdbx {
             update: None,
             search_open: false,
             filters_visible: true,
+            language,
             focus_handle: cx.focus_handle(),
             tree_scroll: ScrollHandle::new(),
             tree_row_count: std::cell::Cell::new(0),
@@ -1711,6 +1785,17 @@ impl Omdbx {
         };
         this.check_for_update(cx);
         this
+    }
+
+    fn set_language(&mut self, language: &str, cx: &mut Context<Self>) {
+        if self.language == language {
+            return;
+        }
+        self.language = language.to_string();
+        gpui_kit::component::set_locale(language);
+        save_language(language);
+        cx.refresh_windows();
+        cx.notify();
     }
 
     fn toggle_connection(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -2182,11 +2267,7 @@ impl Omdbx {
         }
 
         let with_time = kind == TemporalKind::DateTime;
-        let format = if with_time {
-            "%Y-%m-%d %H:%M:%S"
-        } else {
-            "%Y-%m-%d"
-        };
+        let format = date_picker_format(&self.language, with_time);
         let state = cx.new(|cx| {
             let mut state = DatePickerState::new(window, cx).date_format(format);
             if with_time {
@@ -3736,15 +3817,50 @@ impl Omdbx {
                     .px_3()
                     .items_center()
                     .justify_between()
-                    .child(Self::icon_button(
-                        "settings",
-                        Icon::new(AssetIcon::Settings)
-                            .with_size(px(16.))
-                            .text_color(colors.muted_foreground)
-                            .into_any_element(),
-                        colors,
-                        cx.listener(|this, _, _, cx| this.show_notice("设置未完成", cx)),
-                    ))
+                    .child({
+                        let weak = cx.entity().downgrade();
+                        let language = self.language.clone();
+                        Button::new("settings")
+                            .ghost()
+                            .with_size(gpui_kit::component::Size::Small)
+                            .icon(
+                                Icon::new(AssetIcon::Settings)
+                                    .with_size(px(16.))
+                                    .text_color(colors.muted_foreground),
+                            )
+                            .dropdown_menu_with_anchor(
+                                gpui_kit::Anchor::BottomLeft,
+                                move |menu, window, cx| {
+                                    let weak = weak.clone();
+                                    let language = language.clone();
+                                    menu.min_w(px(180.)).submenu(
+                                        "语言 / Language",
+                                        window,
+                                        cx,
+                                        move |menu, _, _| {
+                                            let mut menu = menu;
+                                            for (code, label) in SUPPORTED_LANGUAGES {
+                                                let weak = weak.clone();
+                                                let selected = language == code;
+                                                menu = menu.item(
+                                                    PopupMenuItem::new(label)
+                                                        .checked(selected)
+                                                        .on_click(move |_, _, cx| {
+                                                            let _ = weak.update(
+                                                                cx,
+                                                                |this, cx| {
+                                                                    this.set_language(code, cx)
+                                                                },
+                                                            );
+                                                        }),
+                                                );
+                                            }
+                                            menu
+                                        },
+                                    )
+                                },
+                            )
+                    })
                     // no update, no icon
                     .when_some(self.update.clone(), |this, update| {
                         let color = update.level.color();
@@ -5340,6 +5456,15 @@ mod export_tests {
             sql,
             "UPDATE `people` SET `name` = 'O''Brien' WHERE `id` = 1"
         );
+    }
+
+    #[test]
+    fn date_picker_formats_follow_the_language() {
+        assert_eq!(date_picker_format("zh-CN", false), "%Y-%m-%d");
+        assert_eq!(date_picker_format("en", false), "%m/%d/%Y");
+        assert_eq!(date_picker_format("en", true), "%m/%d/%Y %H:%M:%S");
+        assert_eq!(date_picker_format("ru", false), "%d.%m.%Y");
+        assert_eq!(date_picker_format("pt-BR", false), "%d/%m/%Y");
     }
 
     #[test]

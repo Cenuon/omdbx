@@ -182,6 +182,8 @@ DatePicker:
     ru: "Время"
     zh-CN: 时间
     zh-HK: 時間
+    zh-TW: 時間
+    it: Ora
 Select:
   placeholder:
     en: "Please select"

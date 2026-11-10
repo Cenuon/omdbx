@@ -11,3 +11,6 @@ under the real input (caret and selection stay visible).
 
 Menu item text now uses 13px instead of the hard-coded `text_base()`,
 which overrode the menu's own `text_sm` size and made every popup read large.
+
+Added the missing `DatePicker.time` translations for `zh-TW` and `it`,
+so the time label follows the selected locale in every bundled language.
