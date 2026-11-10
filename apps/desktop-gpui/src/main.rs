@@ -2,6 +2,7 @@
 //! Talks to the existing `dbx-web` sidecar over HTTP so all connection and query
 //! logic is shared with the Electron build.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -27,7 +28,7 @@ use gpui_kit::component::{
     h_flex, v_flex, ActiveTheme, Icon, IconName, Sizable, Theme, ThemeMode, TitleBar,
 };
 use gpui_kit::assets::IconName as AssetIcon;
-use gpui_kit::base::{h_resizable, resizable_panel, ResizeHandleRenderer};
+use gpui_kit::base::{h_resizable, resizable_panel, ElementExt, ResizeHandleRenderer};
 use gpui_kit::prelude::*;
 use gpui_kit::Focusable;
 use gpui_kit::{
@@ -147,6 +148,15 @@ fn post_json(url: &str, payload: &serde_json::Value) -> Result<serde_json::Value
         .into_string()
         .map_err(|error| error.to_string())?;
     serde_json::from_str(&body).map_err(|error| error.to_string())
+}
+
+#[derive(Clone)]
+struct FilterDividerDrag;
+
+impl Render for FilterDividerDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -288,6 +298,12 @@ struct ColumnMeta {
     comment: String,
     #[serde(default)]
     is_primary_key: bool,
+    #[serde(default)]
+    is_nullable: bool,
+    #[serde(default)]
+    column_default: Option<String>,
+    #[serde(default)]
+    extra: Option<String>,
 }
 
 fn fetch_columns(
@@ -304,6 +320,33 @@ fn fetch_columns(
         encode(table)
     ))?;
     serde_json::from_value(value).map_err(|error| error.to_string())
+}
+
+fn fetch_table_props(
+    connection_id: &str,
+    database: &str,
+    schema: &str,
+    table: &str,
+) -> Result<TableProps, String> {
+    let query = format!(
+        "connection_id={}&database={}&schema={}&table={}",
+        encode(connection_id),
+        encode(database),
+        encode(schema),
+        encode(table)
+    );
+    let ddl = get_json(&format!("{API}/api/schema/ddl?{query}"))?;
+    let columns = fetch_columns(connection_id, database, schema, table).unwrap_or_default();
+    let indexes = get_json(&format!("{API}/api/schema/indexes?{query}"))?;
+    let foreign_keys = get_json(&format!("{API}/api/schema/foreign-keys?{query}"))?;
+    let triggers = get_json(&format!("{API}/api/schema/triggers?{query}"))?;
+    Ok(TableProps {
+        ddl: ddl.as_str().unwrap_or_default().to_string(),
+        columns,
+        indexes: serde_json::from_value(indexes).unwrap_or_default(),
+        foreign_keys: serde_json::from_value(foreign_keys).unwrap_or_default(),
+        triggers: serde_json::from_value(triggers).unwrap_or_default(),
+    })
 }
 
 fn fetch_databases(connection_id: &str) -> Result<Vec<String>, String> {
@@ -1645,6 +1688,82 @@ struct Tab {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+enum PropsTab {
+    Ddl,
+    Fields,
+    Indexes,
+    ForeignKeys,
+    Triggers,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct IndexInfo {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    columns: Vec<String>,
+    #[serde(default)]
+    is_unique: bool,
+    #[serde(default)]
+    is_primary: bool,
+    #[serde(default)]
+    index_type: Option<String>,
+    #[serde(default)]
+    included_columns: Option<Vec<String>>,
+    #[serde(default)]
+    comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct ForeignKeyInfo {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    column: String,
+    #[serde(default)]
+    ref_schema: Option<String>,
+    #[serde(default)]
+    ref_table: String,
+    #[serde(default)]
+    ref_column: String,
+    #[serde(default)]
+    on_update: Option<String>,
+    #[serde(default)]
+    on_delete: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct TriggerInfo {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    event: String,
+    #[serde(default)]
+    timing: String,
+    #[serde(default)]
+    level: Option<String>,
+    #[serde(default)]
+    condition: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    statement: Option<String>,
+    #[serde(default)]
+    comment: Option<String>,
+}
+
+#[derive(Default)]
+struct TableProps {
+    ddl: String,
+    columns: Vec<ColumnMeta>,
+    indexes: Vec<IndexInfo>,
+    foreign_keys: Vec<ForeignKeyInfo>,
+    triggers: Vec<TriggerInfo>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum SuggestField {
     Where,
     Order,
@@ -1749,6 +1868,15 @@ struct Omdbx {
     update: Option<UpdateInfo>,
     search_open: bool,
     filters_visible: bool,
+    filter_split: f32,
+    filter_bounds: Rc<Cell<gpui_kit::Bounds<gpui_kit::Pixels>>>,
+    props_open: bool,
+    props_tab: PropsTab,
+    props_loading: bool,
+    props_error: Option<String>,
+    props: TableProps,
+    props_editor: Option<Entity<EditorState>>,
+    props_target: Option<String>,
     language: String,
     focus_handle: FocusHandle,
     tree_scroll: ScrollHandle,
@@ -1881,6 +2009,15 @@ impl Omdbx {
             update: None,
             search_open: false,
             filters_visible: true,
+            filter_split: 2.0 / 3.0,
+            filter_bounds: Rc::new(Cell::new(Default::default())),
+            props_open: false,
+            props_tab: PropsTab::Ddl,
+            props_loading: false,
+            props_error: None,
+            props: TableProps::default(),
+            props_editor: None,
+            props_target: None,
             language,
             focus_handle: cx.focus_handle(),
             tree_scroll: ScrollHandle::new(),
@@ -2100,6 +2237,7 @@ impl Omdbx {
         }
         self.clear_table_filters(window, cx);
         self.load_active(window, cx);
+        self.sync_props_if_open(window, cx);
     }
 
     fn clear_table_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2236,6 +2374,69 @@ impl Omdbx {
             });
         })
         .detach();
+    }
+
+    fn toggle_props(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.props_open {
+            self.props_open = false;
+            cx.notify();
+        } else {
+            self.open_props(window, cx);
+        }
+    }
+
+    fn open_props(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.active.and_then(|index| self.tabs.get(index)).cloned() else {
+            return;
+        };
+        if self.props_open && self.props_target.as_deref() == Some(tab.key.as_str()) {
+            return;
+        }
+        self.props_open = true;
+        self.props_tab = PropsTab::Ddl;
+        self.props_loading = true;
+        self.props_error = None;
+        self.props = TableProps::default();
+        self.props_target = Some(tab.key.clone());
+        self.props_editor = None;
+        cx.notify();
+        let target = tab.key.clone();
+        let connection_id = tab.connection_id.clone();
+        let database = tab.database.clone();
+        let schema = tab.schema.clone();
+        let table = tab.table.clone();
+        let task = cx.background_executor().spawn(async move {
+            fetch_table_props(&connection_id, &database, &schema, &table)
+        });
+        cx.spawn_in(window, async move |weak, cx| {
+            let result = task.await;
+            let _ = weak.update_in(cx, |this, window, cx| {
+                if !this.props_open || this.props_target.as_deref() != Some(target.as_str()) {
+                    return;
+                }
+                this.props_loading = false;
+                match result {
+                    Ok(props) => {
+                        this.props_editor = Some(cx.new(|cx| {
+                            EditorState::new(window, cx)
+                                .language("sql")
+                                .default_value(props.ddl.clone())
+                        }));
+                        this.props = props;
+                        this.props_error = None;
+                    }
+                    Err(error) => this.props_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn sync_props_if_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.props_open {
+            self.open_props(window, cx);
+        }
     }
 
     fn stop_query(&mut self, cx: &mut Context<Self>) {
@@ -3264,6 +3465,7 @@ impl Omdbx {
 
     fn open_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_running_query();
+        self.props_open = false;
         self.next_query += 1;
         let number = self.next_query;
         let editor = cx.new(|cx| {
@@ -3471,6 +3673,7 @@ impl Omdbx {
         self.tabs.remove(index);
         if self.tabs.is_empty() {
             self.cancel_running_query();
+            self.props_open = false;
             self.active = None;
             self.grid = None;
             self.columns.clear();
@@ -3479,6 +3682,7 @@ impl Omdbx {
             let next = index.min(self.tabs.len() - 1);
             self.active = Some(next);
             self.load_active(window, cx);
+            self.sync_props_if_open(window, cx);
             return;
         }
         cx.notify();
@@ -3557,6 +3761,7 @@ impl Omdbx {
 
     fn close_all_tabs(&mut self, cx: &mut Context<Self>) {
         self.cancel_running_query();
+        self.props_open = false;
         self.tabs.clear();
         self.queries.clear();
         self.active = None;
@@ -4460,6 +4665,7 @@ impl Omdbx {
         field: SuggestField,
         label: &'static str,
         color: Hsla,
+        grow: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let (state, value) = match field {
@@ -4468,7 +4674,8 @@ impl Omdbx {
         };
         h_flex()
             .relative()
-            .flex_1()
+            .flex_basis(gpui_kit::relative(0.))
+            .flex_grow(grow)
             .min_w_0()
             .child(Self::filter_field(
                 state,
@@ -4478,6 +4685,442 @@ impl Omdbx {
                 cx.theme().mono_font_family.clone(),
             ))
             .when_some(self.suggest_menu(field, cx), |this, menu| this.child(menu))
+    }
+
+    fn table_props_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors;
+        let muted = colors.muted_foreground;
+        let mono = cx.theme().mono_font_family.clone();
+        let badge = |text: &'static str, color: Hsla| {
+            div()
+                .px(px(5.))
+                .h(px(16.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .rounded(px(4.))
+                .bg(color.opacity(0.12))
+                .text_size(px(9.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(color)
+                .child(text)
+        };
+
+        let tab = |tab: PropsTab, icon: AssetIcon, label: &'static str| {
+            let active = self.props_tab == tab;
+            v_flex()
+                .id(format!("props-tab-{label}"))
+                .flex_1()
+                .h_full()
+                .items_center()
+                .justify_center()
+                .gap(px(2.))
+                .cursor_pointer()
+                .when(active, |this| {
+                    this.text_color(colors.primary)
+                        .border_b_2()
+                        .border_color(colors.primary)
+                })
+                .when(!active, |this| {
+                    this.text_color(muted)
+                        .hover(|style| style.text_color(colors.foreground))
+                })
+                .child(Icon::new(icon).with_size(px(15.)))
+                .child(div().text_size(px(10.5)).child(label))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.props_tab = tab;
+                    cx.notify();
+                }))
+        };
+
+        let empty = |text: &'static str| {
+            v_flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .text_size(px(12.))
+                .text_color(muted)
+                .child(text)
+        };
+
+        let content = if self.props_loading {
+            v_flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .text_size(px(12.))
+                .text_color(muted)
+                .child("加载中…")
+                .into_any_element()
+        } else if let Some(error) = &self.props_error {
+            v_flex()
+                .flex_1()
+                .p_3()
+                .text_size(px(12.))
+                .text_color(colors.danger_foreground)
+                .child(error.clone())
+                .into_any_element()
+        } else {
+            match self.props_tab {
+                PropsTab::Ddl => match &self.props_editor {
+                    Some(editor) => div()
+                        .flex_1()
+                        .min_h_0()
+                        .p_1()
+                        .child(
+                            Editor::new(editor)
+                                .readonly(true)
+                                .appearance(false)
+                                .bordered(false)
+                                .h_full(),
+                        )
+                        .into_any_element(),
+                    None => empty("暂无 DDL").into_any_element(),
+                },
+                PropsTab::Fields => {
+                    if self.props.columns.is_empty() {
+                        empty("暂无字段").into_any_element()
+                    } else {
+                        v_flex()
+                            .id("props-fields")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .p_2()
+                            .gap_1()
+                            .children(self.props.columns.iter().map(|column| {
+                                v_flex()
+                                    .py_1()
+                                    .gap(px(2.))
+                                    .border_b_1()
+                                    .border_color(colors.border.opacity(0.6))
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(
+                                                div()
+                                                    .font_family(mono.clone())
+                                                    .text_size(px(12.5))
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .child(column.name.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .font_family(mono.clone())
+                                                    .text_size(px(10.5))
+                                                    .text_color(muted)
+                                                    .child(column.data_type.clone()),
+                                            )
+                                            .when(column.is_primary_key, |this| {
+                                                this.child(badge("PK", colors.primary))
+                                            })
+                                            .when(
+                                                !column.is_nullable && !column.is_primary_key,
+                                                |this| this.child(badge("NOT NULL", muted)),
+                                            ),
+                                    )
+                                    .when_some(column.column_default.clone(), |this, value| {
+                                        this.child(
+                                            div()
+                                                .text_size(px(10.5))
+                                                .text_color(muted)
+                                                .child(format!("默认值: {value}")),
+                                        )
+                                    })
+                                    .when_some(column.extra.clone().filter(|value| !value.is_empty()), |this, value| {
+                                        this.child(
+                                            div()
+                                                .text_size(px(10.5))
+                                            .text_color(muted)
+                                                .child(value),
+                                        )
+                                    })
+                                    .when(!column.comment.is_empty(), |this| {
+                                        this.child(
+                                            div()
+                                                .text_size(px(10.5))
+                                                .text_color(muted)
+                                                .child(column.comment.clone()),
+                                        )
+                                    })
+                            }))
+                            .into_any_element()
+                    }
+                }
+                PropsTab::Indexes => {
+                    if self.props.indexes.is_empty() {
+                        empty("暂无索引").into_any_element()
+                    } else {
+                        v_flex()
+                            .id("props-indexes")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .p_2()
+                            .gap_1()
+                            .children(self.props.indexes.iter().map(|index| {
+                                v_flex()
+                                    .py_1()
+                                    .gap(px(2.))
+                                    .border_b_1()
+                                    .border_color(colors.border.opacity(0.6))
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(
+                                                div()
+                                                    .font_family(mono.clone())
+                                                    .text_size(px(12.5))
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .child(index.name.clone()),
+                                            )
+                                            .when(index.is_primary, |this| {
+                                                this.child(badge("PRIMARY", colors.primary))
+                                            })
+                                            .when(index.is_unique && !index.is_primary, |this| {
+                                                this.child(badge(
+                                                    "UNIQUE",
+                                                    gpui_kit::rgb(0x2F9E44).into(),
+                                                ))
+                                            })
+                                            .when_some(index.index_type.clone(), |this, value| {
+                                                this.child(
+                                                    div()
+                                                        .text_size(px(10.))
+                                                        .text_color(muted)
+                                                        .child(value),
+                                                )
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .font_family(mono.clone())
+                                            .text_size(px(10.5))
+                                            .text_color(muted)
+                                            .child(index.columns.join(", ")),
+                                    )
+                                    .when_some(
+                                        index
+                                            .included_columns
+                                            .clone()
+                                            .filter(|columns| !columns.is_empty()),
+                                        |this, columns| {
+                                            this.child(
+                                                div()
+                                                    .text_size(px(10.))
+                                                    .text_color(muted)
+                                                    .child(format!("包含: {}", columns.join(", "))),
+                                            )
+                                        },
+                                    )
+                                    .when_some(index.comment.clone(), |this, value| {
+                                        this.child(
+                                            div()
+                                                .text_size(px(10.))
+                                                .text_color(muted)
+                                                .child(value),
+                                        )
+                                    })
+                            }))
+                            .into_any_element()
+                    }
+                }
+                PropsTab::ForeignKeys => {
+                    if self.props.foreign_keys.is_empty() {
+                        empty("暂无外键").into_any_element()
+                    } else {
+                        v_flex()
+                            .id("props-foreign-keys")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .p_2()
+                            .gap_1()
+                            .children(self.props.foreign_keys.iter().map(|key| {
+                                let target = match &key.ref_schema {
+                                    Some(schema) => format!(
+                                        "{}.{}.{}",
+                                        schema, key.ref_table, key.ref_column
+                                    ),
+                                    None => format!("{}.{}", key.ref_table, key.ref_column),
+                                };
+                                v_flex()
+                                    .py_1()
+                                    .gap(px(2.))
+                                    .border_b_1()
+                                    .border_color(colors.border.opacity(0.6))
+                                    .child(
+                                        div()
+                                            .font_family(mono.clone())
+                                            .text_size(px(12.5))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(key.name.clone()),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .text_size(px(10.5))
+                                            .text_color(muted)
+                                            .child(key.column.clone())
+                                            .child("→")
+                                            .child(target),
+                                    )
+                                    .when_some(key.on_update.clone(), |this, value| {
+                                        this.child(
+                                            div()
+                                                .text_size(px(10.))
+                                                .text_color(muted)
+                                                .child(format!("ON UPDATE {value}")),
+                                        )
+                                    })
+                                    .when_some(key.on_delete.clone(), |this, value| {
+                                        this.child(
+                                            div()
+                                                .text_size(px(10.))
+                                                .text_color(muted)
+                                                .child(format!("ON DELETE {value}")),
+                                        )
+                                    })
+                            }))
+                            .into_any_element()
+                    }
+                }
+                PropsTab::Triggers => {
+                    if self.props.triggers.is_empty() {
+                        empty("暂无触发器").into_any_element()
+                    } else {
+                        v_flex()
+                            .id("props-triggers")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .p_2()
+                            .gap_1()
+                            .children(self.props.triggers.iter().map(|trigger| {
+                                v_flex()
+                                    .py_1()
+                                    .gap(px(2.))
+                                    .border_b_1()
+                                    .border_color(colors.border.opacity(0.6))
+                                    .child(
+                                        div()
+                                            .font_family(mono.clone())
+                                            .text_size(px(12.5))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(trigger.name.clone()),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .text_size(px(10.5))
+                                            .text_color(muted)
+                                            .child(format!(
+                                                "{} {}",
+                                                trigger.timing, trigger.event
+                                            ))
+                                            .when_some(trigger.level.clone(), |this, value| {
+                                                this.child(value)
+                                            })
+                                            .when_some(trigger.enabled, |this, enabled| {
+                                                this.child(if enabled {
+                                                    "已启用"
+                                                } else {
+                                                    "已停用"
+                                                })
+                                            })
+                                            .when_some(trigger.language.clone(), |this, value| {
+                                                this.child(format!("LANGUAGE {value}"))
+                                            }),
+                                    )
+                                    .when_some(trigger.condition.clone(), |this, value| {
+                                        this.child(
+                                            div()
+                                                .text_size(px(10.))
+                                                .text_color(muted)
+                                                .child(format!("WHEN {value}")),
+                                        )
+                                    })
+                                    .when_some(
+                                        trigger
+                                            .statement
+                                            .clone()
+                                            .filter(|value| !value.trim().is_empty()),
+                                        |this, statement| {
+                                            this.child(
+                                                div()
+                                                    .mt_1()
+                                                    .p_1()
+                                                    .rounded(px(4.))
+                                                    .bg(colors.secondary)
+                                                    .font_family(mono.clone())
+                                                    .text_size(px(10.))
+                                                    .text_color(colors.foreground)
+                                                    .child(statement),
+                                            )
+                                        },
+                                    )
+                                    .when(!trigger.comment.clone().unwrap_or_default().is_empty(), |this| {
+                                        this.child(
+                                            div()
+                                                .text_size(px(10.))
+                                                .text_color(muted)
+                                                .child(trigger.comment.clone().unwrap_or_default()),
+                                        )
+                                    })
+                            }))
+                            .into_any_element()
+                    }
+                }
+            }
+        };
+
+        v_flex()
+            .size_full()
+            .child(
+                h_flex()
+                    .h(px(44.))
+                    .flex_none()
+                    .px_3()
+                    .gap_2()
+                    .items_center()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("表属性"),
+                    )
+                    .child(Self::icon_button(
+                        "props-close",
+                        Icon::new(AssetIcon::X)
+                            .with_size(px(14.))
+                            .text_color(muted)
+                            .into_any_element(),
+                        colors,
+                        cx.listener(|this, _, _, cx| {
+                            this.props_open = false;
+                            cx.notify();
+                        }),
+                    )),
+            )
+            .child(
+                h_flex()
+                    .h(px(58.))
+                    .flex_none()
+                    .px_1()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .child(tab(PropsTab::Ddl, AssetIcon::Code, "DDL"))
+                    .child(tab(PropsTab::Fields, AssetIcon::List, "字段"))
+                    .child(tab(PropsTab::Indexes, AssetIcon::KeyRound, "索引"))
+                    .child(tab(PropsTab::ForeignKeys, AssetIcon::Link, "外键"))
+                    .child(tab(PropsTab::Triggers, AssetIcon::RefreshCw, "触发器")),
+            )
+            .child(content)
     }
 
     /// WHERE / ORDER BY input above a table tab, plus copy and refresh.
@@ -4517,19 +5160,61 @@ impl Omdbx {
                     window.dispatch_action(Box::new(MoveDown), cx);
                 }
             }))
-            .child(self.filter_slot(
-                SuggestField::Where,
-                "WHERE",
-                gpui_kit::rgb(0x2F6BFF).into(),
-                cx,
-            ))
-            .child(divider())
-            .child(self.filter_slot(
-                SuggestField::Order,
-                "ORDER BY",
-                gpui_kit::rgb(0xE8722C).into(),
-                cx,
-            ))
+            .child({
+                let bounds = self.filter_bounds.clone();
+                let split = self.filter_split;
+                h_flex()
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .on_prepaint(move |value, _, _| bounds.set(value))
+                    .child(self.filter_slot(
+                        SuggestField::Where,
+                        "WHERE",
+                        gpui_kit::rgb(0x2F6BFF).into(),
+                        split,
+                        cx,
+                    ))
+                    .child(
+                        div()
+                            .id("filter-split")
+                            .w(px(9.))
+                            .h_full()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_col_resize()
+                            .occlude()
+                            .on_drag(FilterDividerDrag, |drag, _, _, cx| {
+                                cx.stop_propagation();
+                                cx.new(|_| drag.clone())
+                            })
+                            .on_drag_move(cx.listener(
+                                |this,
+                                 e: &gpui_kit::DragMoveEvent<FilterDividerDrag>,
+                                 _,
+                                 cx| {
+                                    let bounds = this.filter_bounds.get();
+                                    if bounds.size.width > px(0.) {
+                                        let ratio = ((e.event.position.x - bounds.origin.x)
+                                            / bounds.size.width)
+                                            .clamp(0.2, 0.8);
+                                        this.filter_split = ratio;
+                                        cx.notify();
+                                    }
+                                },
+                            ))
+                            .child(div().w(px(1.)).h(px(16.)).bg(colors.border)),
+                    )
+                    .child(self.filter_slot(
+                        SuggestField::Order,
+                        "ORDER BY",
+                        gpui_kit::rgb(0xE8722C).into(),
+                        1.0 - split,
+                        cx,
+                    ))
+            })
             .child(divider())
             .child(Self::icon_button(
                 "table-copy",
@@ -4583,6 +5268,15 @@ impl Omdbx {
                         }
                     }),
             )
+            .child(Self::icon_button(
+                "table-props",
+                Icon::new(AssetIcon::PanelRightOpen)
+                    .with_size(px(16.))
+                    .text_color(colors.foreground)
+                    .into_any_element(),
+                colors,
+                cx.listener(|this, _, window, cx| this.toggle_props(window, cx)),
+            ))
     }
 
     fn filter_field(
@@ -5541,14 +6235,35 @@ impl Omdbx {
                 this.pt(px(8.))
             })
             .child(
-                v_flex()
+                h_flex()
                     .size_full()
-                    .rounded(px(10.))
-                    .overflow_hidden()
-                    .bg(colors.background)
-                    .border_1()
-                    .border_color(colors.border)
-                    .child(self.main_pane(cx)),
+                    .gap(px(8.))
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .h_full()
+                            .min_w_0()
+                            .rounded(px(10.))
+                            .overflow_hidden()
+                            .bg(colors.background)
+                            .border_1()
+                            .border_color(colors.border)
+                            .child(self.main_pane(cx)),
+                    )
+                    .when(self.props_open, |this| {
+                        this.child(
+                            v_flex()
+                                .w(px(340.))
+                                .h_full()
+                                .flex_none()
+                                .rounded(px(10.))
+                                .overflow_hidden()
+                                .bg(colors.background)
+                                .border_1()
+                                .border_color(colors.border)
+                                .child(self.table_props_panel(cx)),
+                        )
+                    }),
             )
     }
 }
@@ -5778,18 +6493,27 @@ mod export_tests {
                 data_type: "int".to_string(),
                 comment: String::new(),
                 is_primary_key: true,
+                is_nullable: false,
+                column_default: None,
+                extra: None,
             },
             ColumnMeta {
                 name: "name".to_string(),
                 data_type: "varchar".to_string(),
                 comment: String::new(),
                 is_primary_key: false,
+                is_nullable: true,
+                column_default: None,
+                extra: None,
             },
             ColumnMeta {
                 name: "note".to_string(),
                 data_type: "varchar".to_string(),
                 comment: String::new(),
                 is_primary_key: false,
+                is_nullable: true,
+                column_default: None,
+                extra: None,
             },
         ];
         let columns = vec!["id".to_string(), "name".to_string(), "note".to_string()];
