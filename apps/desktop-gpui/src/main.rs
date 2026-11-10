@@ -1126,9 +1126,13 @@ impl TableDelegate for GridDelegate {
                         .appearance(false)
                         .with_size(gpui_kit::component::Size::XSmall)
                         .w_full()
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_size(px(13.))
                         .into_any_element(),
                     CellEditor::Time(state) => TimeField::new(state)
                         .with_size(gpui_kit::component::Size::XSmall)
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_size(px(13.))
                         .into_any_element(),
                 };
                 return div()
