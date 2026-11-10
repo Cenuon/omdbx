@@ -18,5 +18,6 @@ tab right-click menus can use 13px text while regular popup menus stay at 16px.
 The date picker value field uses the theme mono font at 13px so the table
 cell editor matches the surrounding cells.
 
-The table reserves a bottom band for the horizontal scrollbar so its
-overlay no longer covers the last row and steals cell clicks.
+The table uses 4px overlay scrollbars and reserves exactly that bottom band,
+so the horizontal bar no longer covers the last row or leaves a gap above the
+footer.

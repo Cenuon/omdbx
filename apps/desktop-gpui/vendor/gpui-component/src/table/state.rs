@@ -23,6 +23,10 @@ use rust_i18n::t;
 
 use super::*;
 
+/// Slim overlay scrollbars; the table reserves exactly this band so the
+/// horizontal bar never covers a row and has no gap against the footer.
+const TABLE_SCROLLBAR_THICKNESS: Pixels = px(4.);
+
 /// Grab room on each side of a resize handle's hairline, so the divider can be
 /// caught without pixel-hunting. Both halves of the band are this wide, so
 /// widening the grab area stays symmetric about the boundary. `resizable`'s
@@ -2640,9 +2644,31 @@ where
                 .top(self.header_band_height())
                 .right_0()
                 .bottom_0()
-                .w(Scrollbar::width())
+                .w(TABLE_SCROLLBAR_THICKNESS)
                 .child(
                     Scrollbar::vertical(&self.vertical_scroll_handle)
+                        .styles(|styles| {
+                            styles
+                                .thumb(|thumb| {
+                                    thumb
+                                        .width(TABLE_SCROLLBAR_THICKNESS)
+                                        .inset(px(0.))
+                                        .radius(px(2.))
+                                })
+                                .thumb_hover(|thumb| {
+                                    thumb
+                                        .width(TABLE_SCROLLBAR_THICKNESS)
+                                        .inset(px(0.))
+                                        .radius(px(2.))
+                                })
+                                .thumb_active(|thumb| {
+                                    thumb
+                                        .width(TABLE_SCROLLBAR_THICKNESS)
+                                        .inset(px(0.))
+                                        .radius(px(2.))
+                                })
+                                .track(|track| track.width(TABLE_SCROLLBAR_THICKNESS))
+                        })
                         .viewport_from_layout()
                         .max_fps(60),
                 ),
@@ -2659,8 +2685,33 @@ where
             .left(self.fixed_head_cols_bounds.size.width)
             .right_0()
             .bottom_0()
-            .h(Scrollbar::width())
-            .child(Scrollbar::horizontal(&self.horizontal_scroll_handle).viewport_from_layout())
+            .h(TABLE_SCROLLBAR_THICKNESS)
+            .child(
+                Scrollbar::horizontal(&self.horizontal_scroll_handle)
+                    .styles(|styles| {
+                        styles
+                            .thumb(|thumb| {
+                                thumb
+                                    .width(TABLE_SCROLLBAR_THICKNESS)
+                                    .inset(px(0.))
+                                    .radius(px(2.))
+                            })
+                            .thumb_hover(|thumb| {
+                                thumb
+                                    .width(TABLE_SCROLLBAR_THICKNESS)
+                                    .inset(px(0.))
+                                    .radius(px(2.))
+                            })
+                            .thumb_active(|thumb| {
+                                thumb
+                                    .width(TABLE_SCROLLBAR_THICKNESS)
+                                    .inset(px(0.))
+                                    .radius(px(2.))
+                            })
+                            .track(|track| track.width(TABLE_SCROLLBAR_THICKNESS))
+                    })
+                    .viewport_from_layout(),
+            )
     }
 }
 
@@ -2741,7 +2792,7 @@ where
             .when(self.options.scrollbar_visible.bottom, |this| {
                 // Reserve the horizontal scrollbar's own band so it never
                 // covers the last row's hit area.
-                this.pb(Scrollbar::width())
+                this.pb(TABLE_SCROLLBAR_THICKNESS)
             })
             .child(self.render_table_header(left_columns_count, window, cx))
             .context_menu({
