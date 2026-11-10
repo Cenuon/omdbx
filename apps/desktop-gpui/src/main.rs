@@ -5151,7 +5151,7 @@ impl Omdbx {
             .size_full()
             .child(
                 h_flex()
-                    .h(px(44.))
+                    .h(px(36.))
                     .flex_none()
                     .px_3()
                     .gap_2()
