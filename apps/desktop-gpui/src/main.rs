@@ -1112,7 +1112,6 @@ impl TableDelegate for GridDelegate {
         }
         if let Some(editing) = &self.editing {
             if editing.row == row && editing.col == col - 1 {
-                let text_framed = matches!(&editing.editor, CellEditor::Text(_));
                 let content = match &editing.editor {
                     CellEditor::Text(input) => Input::new(input)
                         .appearance(false)
@@ -1133,6 +1132,8 @@ impl TableDelegate for GridDelegate {
                         .with_size(gpui_kit::component::Size::XSmall)
                         .font_family(cx.theme().mono_font_family.clone())
                         .text_size(px(13.))
+                        .bg(gpui_kit::transparent_black())
+                        .border_color(gpui_kit::transparent_black())
                         .into_any_element(),
                 };
                 return div()
@@ -1143,10 +1144,8 @@ impl TableDelegate for GridDelegate {
                     .font_family(cx.theme().mono_font_family.clone())
                     .text_size(px(13.))
                     .rounded(px(2.))
-                    .when(text_framed, |this| {
-                        this.border_1()
-                            .border_color(cx.theme().colors.foreground)
-                    })
+                    .border_1()
+                    .border_color(cx.theme().colors.foreground)
                     .bg(cx.theme().colors.background)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(content)
