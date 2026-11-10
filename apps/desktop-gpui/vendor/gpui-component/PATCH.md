@@ -14,3 +14,6 @@ so the time label follows the selected locale in every bundled language.
 
 Added `PopupMenu::text_size`, inherited by submenus, so the table-cell and
 tab right-click menus can use 13px text while regular popup menus stay at 16px.
+
+The date picker value field uses the theme mono font at 13px so the table
+cell editor matches the surrounding cells.

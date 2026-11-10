@@ -1140,6 +1140,8 @@ impl TableDelegate for GridDelegate {
                     .inset_0()
                     .flex()
                     .items_center()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_size(px(13.))
                     .rounded(px(2.))
                     .when(text_framed, |this| {
                         this.border_1()

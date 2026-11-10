@@ -737,6 +737,8 @@ impl RenderOnce for DatePicker {
                         |this| this.focus_ring_style(window, cx),
                     )
                     .input_text_size(self.size)
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_size(px(13.))
                     .input_size(self.size)
                     .when(!state.open && !self.disabled, |this| {
                         this.on_click(
