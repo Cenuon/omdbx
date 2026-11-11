@@ -5810,6 +5810,7 @@ impl Omdbx {
                         Some(state) => Editor::new(&state)
                             .appearance(false)
                             .bordered(false)
+                            .with_size(gpui_kit::component::Size::XSmall)
                             .h(gpui_kit::relative(1.))
                             .into_any_element(),
                         None => div().into_any_element(),
