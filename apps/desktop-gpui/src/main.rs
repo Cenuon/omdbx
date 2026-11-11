@@ -4779,42 +4779,50 @@ impl Omdbx {
                 .child(text)
         };
 
-        let accent: Hsla = gpui_kit::rgb(0x2F6BFF).into();
-        let tab = |tab: PropsTab, icon: AssetIcon, label: &'static str| {
+        let tab = |tab: PropsTab, label: &'static str, count: Option<usize>| {
             let active = self.props_tab == tab;
-            let fg = if active { accent } else { muted };
-            h_flex()
+            let label_color = if active { colors.foreground } else { muted };
+            v_flex()
                 .id(format!("props-tab-{label}"))
                 .w(px(64.))
                 .flex_none()
-                .h(px(30.))
-                .items_center()
+                .h_full()
                 .justify_center()
-                .gap(px(4.))
-                .rounded(px(6.))
-                .border_1()
+                .border_b_2()
                 .border_color(if active {
-                    accent.opacity(0.28)
+                    colors.foreground
                 } else {
                     gpui_kit::transparent_black()
                 })
                 .cursor_pointer()
-                .text_size(px(11.))
-                .when(active, |this| {
-                    this.bg(accent.opacity(0.14))
-                        .text_color(accent)
-                        .font_weight(FontWeight::MEDIUM)
-                })
-                .when(!active, |this| {
-                    this.text_color(muted)
-                        .hover(|style| style.bg(colors.secondary).text_color(colors.foreground))
-                })
-                .child(Icon::new(icon).with_size(px(14.)).text_color(fg))
-                .child(div().text_color(fg).child(label))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.props_tab = tab;
                     cx.notify();
                 }))
+                .child(
+                    h_flex()
+                        .gap(px(2.))
+                        .items_center()
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .font_weight(if active {
+                                    FontWeight::MEDIUM
+                                } else {
+                                    FontWeight::NORMAL
+                                })
+                                .text_color(label_color)
+                                .child(label),
+                        )
+                        .when_some(count, |this, count| {
+                            this.child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .text_color(muted)
+                                    .child(count.to_string()),
+                            )
+                        }),
+                )
         };
 
         let empty = |text: &'static str| {
@@ -5171,26 +5179,42 @@ impl Omdbx {
         v_flex()
             .size_full()
             .min_w_0()
-            .child(
+            .child({
+                let loaded = !self.props_loading && self.props_error.is_none();
                 h_flex()
                     .id("props-tab-scroll")
                     .min_w_0()
                     .h(px(36.))
                     .flex_none()
                     .px_2()
-                    .py(px(3.))
                     .gap_1()
                     .items_center()
                     .overflow_x_scroll()
                     .track_scroll(&self.props_tab_scroll)
                     .border_b_1()
                     .border_color(colors.border)
-                    .child(tab(PropsTab::Ddl, AssetIcon::Code, "DDL"))
-                    .child(tab(PropsTab::Fields, AssetIcon::List, "字段"))
-                    .child(tab(PropsTab::Indexes, AssetIcon::KeyRound, "索引"))
-                    .child(tab(PropsTab::ForeignKeys, AssetIcon::Link, "外键"))
-                    .child(tab(PropsTab::Triggers, AssetIcon::RefreshCw, "触发器")),
-            )
+                    .child(tab(PropsTab::Ddl, "DDL", None))
+                    .child(tab(
+                        PropsTab::Fields,
+                        "字段",
+                        loaded.then_some(self.props.columns.len()),
+                    ))
+                    .child(tab(
+                        PropsTab::Indexes,
+                        "索引",
+                        loaded.then_some(self.props.indexes.len()),
+                    ))
+                    .child(tab(
+                        PropsTab::ForeignKeys,
+                        "外键",
+                        loaded.then_some(self.props.foreign_keys.len()),
+                    ))
+                    .child(tab(
+                        PropsTab::Triggers,
+                        "触发器",
+                        loaded.then_some(self.props.triggers.len()),
+                    ))
+            })
             .child(content)
     }
 
