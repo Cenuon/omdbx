@@ -4784,9 +4784,10 @@ impl Omdbx {
             let label_color = if active { colors.foreground } else { muted };
             v_flex()
                 .id(format!("props-tab-{label}"))
-                .w(px(64.))
+                .w(px(56.))
                 .flex_none()
                 .h_full()
+                .items_center()
                 .justify_center()
                 .border_b_2()
                 .border_color(if active {
