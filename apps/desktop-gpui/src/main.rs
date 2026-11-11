@@ -5720,7 +5720,7 @@ impl Omdbx {
             // connection, database and schema pickers, then the actions
             .child(
                 h_flex()
-                    .h(px(48.))
+                    .h(px(36.))
                     .flex_none()
                     .px_3()
                     .gap_1()
@@ -5818,7 +5818,7 @@ impl Omdbx {
             // result header
             .child(
                 h_flex()
-                    .h(px(44.))
+                    .h(px(36.))
                     .flex_none()
                     .px_3()
                     .gap_1()
