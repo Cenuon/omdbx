@@ -16,6 +16,7 @@ gpui-component = { path = "vendor/gpui-component" }
 gpui = { version = "0.2.2", features = ["macos-blade"] }
 gpui-kit = { version = "0.9.0", features = ["tree-sitter", "tree-sitter-sql"] }
 chrono = "0.4"
+sqlformat = "0.5"
 rust_xlsxwriter = "0.102.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

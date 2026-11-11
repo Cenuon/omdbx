@@ -609,6 +609,23 @@ fn last_word(value: &str) -> String {
         .to_string()
 }
 
+fn format_sql_text(sql: &str, db_type: &str) -> String {
+    let dialect = match db_type {
+        "postgres" | "postgresql" => sqlformat::Dialect::PostgreSql,
+        "sqlserver" | "mssql" => sqlformat::Dialect::SQLServer,
+        _ => sqlformat::Dialect::Generic,
+    };
+    let options = sqlformat::FormatOptions {
+        uppercase: Some(true),
+        indent: sqlformat::Indent::Spaces(2),
+        max_inline_top_level: Some(80),
+        max_inline_arguments: Some(60),
+        dialect,
+        ..Default::default()
+    };
+    sqlformat::format(sql, &sqlformat::QueryParams::None, &options)
+}
+
 fn sql_spans(value: &str) -> Vec<gpui_kit::AnyElement> {
     let mut segments: Vec<(String, bool)> = Vec::new();
     let mut buffer = String::new();
@@ -1683,6 +1700,33 @@ struct QueryTab {
     schema: String,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResultTab {
+    Results,
+    Summary,
+    Info,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QueryStatus {
+    Running,
+    Success,
+    Failed,
+    Cancelled,
+}
+
+struct QueryInfo {
+    sql: String,
+    connection: String,
+    database: String,
+    schema: String,
+    elapsed_ms: Option<u128>,
+    rows: usize,
+    columns: usize,
+    status: QueryStatus,
+    error: Option<String>,
+}
+
 #[derive(Clone, Copy)]
 enum CloseTarget {
     Table(usize),
@@ -1865,6 +1909,8 @@ struct Omdbx {
     next_query: u64,
     show_query: bool,
     schemas: HashMap<String, Vec<String>>,
+    result_tab: ResultTab,
+    query_info: Option<QueryInfo>,
     query_connection_open: bool,
     query_database_open: bool,
     query_schema_open: bool,
@@ -2016,6 +2062,8 @@ impl Omdbx {
             next_query: 0,
             show_query: false,
             schemas: HashMap::new(),
+            result_tab: ResultTab::Results,
+            query_info: None,
             query_connection_open: false,
             query_database_open: false,
             query_schema_open: false,
@@ -3682,6 +3730,32 @@ impl Omdbx {
         (connection.id, database, schema)
     }
 
+    fn format_query_sql(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(query) = self
+            .active_query
+            .and_then(|index| self.queries.get(index))
+            .cloned()
+        else {
+            return;
+        };
+        let sql = query.editor.read(cx).value().to_string();
+        if sql.trim().is_empty() {
+            return;
+        }
+        let db_type = self
+            .connections
+            .iter()
+            .find(|item| item.id == query.connection_id)
+            .map(|item| item.db_type.clone())
+            .unwrap_or_default();
+        let formatted = format_sql_text(&sql, &db_type);
+        query
+            .editor
+            .update(cx, |state, cx| state.set_value(&formatted, window, cx));
+        self.result_tab = ResultTab::Results;
+        cx.notify();
+    }
+
     fn close_query_menus(&mut self) {
         self.query_connection_open = false;
         self.query_database_open = false;
@@ -3774,6 +3848,18 @@ impl Omdbx {
         let execution_id = uuid::Uuid::new_v4().to_string();
         self.running_query = Some(execution_id.clone());
         self.cancel_requested = None;
+        self.result_tab = ResultTab::Results;
+        self.query_info = Some(QueryInfo {
+            sql: sql.clone(),
+            connection: connection.name.clone(),
+            database: database.clone(),
+            schema: schema.clone(),
+            elapsed_ms: None,
+            rows: 0,
+            columns: 0,
+            status: QueryStatus::Running,
+            error: None,
+        });
         cx.notify();
         let started = std::time::Instant::now();
         let task_id = execution_id.clone();
@@ -3814,6 +3900,9 @@ impl Omdbx {
                 this.loading = false;
                 match result {
                     Ok((data, schema_columns)) => {
+                        let rows_len = data.rows.len();
+                        let columns_len = data.columns.len();
+                        let elapsed_ms = started.elapsed().as_millis();
                         let meta: Vec<ColumnMeta> = data
                             .columns
                             .iter()
@@ -3854,9 +3943,30 @@ impl Omdbx {
                         this.columns = data.columns;
                         this.rows = data.rows;
                         this.error = None;
-                        this.query_ms = Some(started.elapsed().as_millis());
+                        this.query_ms = Some(elapsed_ms);
+                        if let Some(info) = this.query_info.as_mut() {
+                            info.elapsed_ms = Some(elapsed_ms);
+                            info.rows = rows_len;
+                            info.columns = columns_len;
+                            info.status = QueryStatus::Success;
+                            info.error = None;
+                        }
                     }
                     Err(message) => {
+                        let elapsed_ms = started.elapsed().as_millis();
+                        if let Some(info) = this.query_info.as_mut() {
+                            info.elapsed_ms = Some(elapsed_ms);
+                            info.status = if cancelled {
+                                QueryStatus::Cancelled
+                            } else {
+                                QueryStatus::Failed
+                            };
+                            info.error = if cancelled {
+                                None
+                            } else {
+                                Some(message.clone())
+                            };
+                        }
                         if cancelled {
                             this.show_notice("已停止查询", cx);
                         } else {
@@ -6171,6 +6281,51 @@ impl Omdbx {
                 }
             });
 
+        let result_tab = |tab: ResultTab, label: &'static str, count: Option<usize>| {
+            let active = self.result_tab == tab;
+            let fg = if active { colors.foreground } else { muted };
+            v_flex()
+                .id(format!("query-result-tab-{label}"))
+                .h_full()
+                .justify_center()
+                .border_b_2()
+                .border_color(if active {
+                    colors.foreground
+                } else {
+                    gpui_kit::transparent_black()
+                })
+                .px_2()
+                .cursor_pointer()
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .font_weight(if active {
+                                    FontWeight::MEDIUM
+                                } else {
+                                    FontWeight::NORMAL
+                                })
+                                .text_color(fg)
+                                .child(label),
+                        )
+                        .when_some(count, |this, count| {
+                            this.child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(muted)
+                                    .child(count.to_string()),
+                            )
+                        }),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.result_tab = tab;
+                    cx.notify();
+                }))
+        };
+
         v_flex()
             .flex_1()
             .h_full()
@@ -6210,23 +6365,14 @@ impl Omdbx {
                             .text_color(muted)
                             .into_any_element(),
                         colors,
-                        cx.listener(|this, _, _, cx| this.show_notice("格式化未完成", cx)),
-                    ))
-                    .child(Self::icon_button(
-                        "query-info",
-                        Icon::new(AssetIcon::Info)
-                            .with_size(px(16.))
-                            .text_color(muted)
-                            .into_any_element(),
-                        colors,
-                        cx.listener(|this, _, _, cx| this.show_notice("查询信息未完成", cx)),
+                        cx.listener(|this, _, window, cx| this.format_query_sql(window, cx)),
                     ))
                     .child(
                         Button::new("run-query")
                             .primary()
                             .small()
-                            .icon(Icon::new(AssetIcon::Play).with_size(px(16.)))
-                            .label("运行")
+                            .tooltip("运行")
+                            .icon(Icon::new(AssetIcon::Play).with_size(px(17.)))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.run_query(window, cx)
                             })),
@@ -6273,31 +6419,9 @@ impl Omdbx {
                     .border_t_1()
                     .border_b_1()
                     .border_color(colors.border)
-                    .child(
-                        v_flex()
-                            .h_full()
-                            .justify_center()
-                            .border_b_2()
-                            .border_color(colors.foreground)
-                            .px_1()
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .items_center()
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child("结果"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .text_color(muted)
-                                            .child(rows.to_string()),
-                                    ),
-                            ),
-                    )
+                    .child(result_tab(ResultTab::Results, "结果", Some(rows)))
+                    .child(result_tab(ResultTab::Summary, "摘要", None))
+                    .child(result_tab(ResultTab::Info, "信息", None))
                     .child(div().flex_1())
                     .child(Self::icon_button(
                         "rerun-query",
@@ -6327,27 +6451,31 @@ impl Omdbx {
                         cx.listener(|this, _, _, cx| this.show_notice("更多操作未完成", cx)),
                     )),
             )
-            // results
-            .child(match self.grid.clone() {
-                Some(grid) => div()
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.table_frame(&grid, colors))
-                    .into_any_element(),
-                None => v_flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(muted)
-                            .child(match &self.error {
-                                Some(message) => message.clone(),
-                                None => "运行查询查看结果".to_string(),
-                            }),
-                    )
-                    .into_any_element(),
+            // result body
+            .child(match self.result_tab {
+                ResultTab::Results => match self.grid.clone() {
+                    Some(grid) => div()
+                        .flex_1()
+                        .min_h_0()
+                        .child(self.table_frame(&grid, colors))
+                        .into_any_element(),
+                    None => v_flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(muted)
+                                .child(match &self.error {
+                                    Some(message) => message.clone(),
+                                    None => "运行查询查看结果".to_string(),
+                                }),
+                        )
+                        .into_any_element(),
+                },
+                ResultTab::Summary => self.query_summary_panel(cx).into_any_element(),
+                ResultTab::Info => self.query_info_panel(cx).into_any_element(),
             })
             // status bar
             .child(
@@ -6552,6 +6680,232 @@ impl Omdbx {
             .when(!self.show_query && tab.is_some(), |this| {
                 this.child(self.table_footer(cx))
             })
+    }
+
+    fn query_summary_panel(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let colors = cx.theme().colors;
+        let muted = colors.muted_foreground;
+        let mono = cx.theme().mono_font_family.clone();
+        let Some(info) = &self.query_info else {
+            return v_flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .text_size(px(12.))
+                .text_color(muted)
+                .child("运行查询查看摘要")
+                .into_any_element();
+        };
+        let (status, status_color): (&str, Hsla) = match info.status {
+            QueryStatus::Running => ("执行中", colors.primary),
+            QueryStatus::Success => ("成功", gpui_kit::rgb(0x2F9E44).into()),
+            QueryStatus::Failed => ("失败", colors.danger_foreground),
+            QueryStatus::Cancelled => ("已取消", muted),
+        };
+        let card = |label: &'static str, value: String| {
+            v_flex()
+                .flex_1()
+                .p_3()
+                .gap_1()
+                .rounded(px(8.))
+                .border_1()
+                .border_color(colors.border)
+                .bg(colors.secondary.opacity(0.35))
+                .child(
+                    div()
+                        .text_size(px(20.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(value),
+                )
+                .child(div().text_size(px(11.)).text_color(muted).child(label))
+        };
+        let detail = |label: &'static str, value: String, color: Hsla| {
+            h_flex()
+                .justify_between()
+                .items_start()
+                .py_1()
+                .border_b_1()
+                .border_color(colors.border.opacity(0.6))
+                .child(div().text_size(px(12.)).text_color(muted).child(label))
+                .child(
+                    div()
+                        .max_w(px(520.))
+                        .text_right()
+                        .font_family(mono.clone())
+                        .text_size(px(12.))
+                        .text_color(color)
+                        .child(value),
+                )
+        };
+
+        v_flex()
+            .id("query-summary")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .p_4()
+            .gap_3()
+            .child(
+                div()
+                    .text_size(px(14.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("查询摘要"),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(card("返回行数", info.rows.to_string()))
+                    .child(card("列数", info.columns.to_string()))
+                    .child(card(
+                        "耗时",
+                        info.elapsed_ms
+                            .map(|ms| format!("{ms} ms"))
+                            .unwrap_or_else(|| "—".to_string()),
+                    )),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(detail(
+                        "查询目标",
+                        format!(
+                            "{} / {} / {}",
+                            info.connection, info.database, info.schema
+                        ),
+                        colors.foreground,
+                    ))
+                    .child(detail("状态", status.to_string(), status_color)),
+            )
+            .when_some(info.error.clone(), |this, error| {
+                this.child(
+                    div()
+                        .p_3()
+                        .rounded(px(8.))
+                        .border_1()
+                        .border_color(colors.danger_foreground.opacity(0.35))
+                        .bg(colors.danger_foreground.opacity(0.06))
+                        .text_size(px(12.))
+                        .text_color(colors.danger_foreground)
+                        .child(error),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn query_info_panel(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let colors = cx.theme().colors;
+        let muted = colors.muted_foreground;
+        let mono = cx.theme().mono_font_family.clone();
+        let Some(info) = &self.query_info else {
+            return v_flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .text_size(px(12.))
+                .text_color(muted)
+                .child("运行查询查看信息")
+                .into_any_element();
+        };
+        let (status, status_color): (&str, Hsla) = match info.status {
+            QueryStatus::Running => ("执行中", colors.primary),
+            QueryStatus::Success => ("成功", gpui_kit::rgb(0x2F9E44).into()),
+            QueryStatus::Failed => ("失败", colors.danger_foreground),
+            QueryStatus::Cancelled => ("已取消", muted),
+        };
+        let detail = |label: &'static str, value: String, color: Hsla| {
+            h_flex()
+                .justify_between()
+                .items_start()
+                .py_1()
+                .border_b_1()
+                .border_color(colors.border.opacity(0.6))
+                .child(div().text_size(px(12.)).text_color(muted).child(label))
+                .child(
+                    div()
+                        .max_w(px(560.))
+                        .text_right()
+                        .font_family(mono.clone())
+                        .text_size(px(12.))
+                        .text_color(color)
+                        .child(value),
+                )
+        };
+
+        v_flex()
+            .id("query-info")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .p_3()
+            .gap_2()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .text_size(px(12.))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(status_color)
+                            .child(status),
+                    )
+                    .child(div().text_color(colors.border).child("·"))
+                    .child(
+                        div()
+                            .font_family(mono.clone())
+                            .text_color(colors.foreground)
+                            .child(format!(
+                                "{} / {} / {}",
+                                info.connection, info.database, info.schema
+                            )),
+                    )
+                    .child(div().text_color(colors.border).child("·"))
+                    .child(div().text_color(muted).child(
+                        info.elapsed_ms
+                            .map(|ms| format!("{ms} ms"))
+                            .unwrap_or_else(|| "—".to_string()),
+                    ))
+                    .child(div().text_color(colors.border).child("·"))
+                    .child(
+                        div()
+                            .text_color(muted)
+                            .child(format!("{} 行 / {} 列", info.rows, info.columns)),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(muted)
+                    .child("执行的 SQL"),
+            )
+            .child(
+                div()
+                    .p_3()
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(colors.border)
+                    .bg(colors.secondary.opacity(0.3))
+                    .font_family(mono)
+                    .text_size(px(12.))
+                    .line_height(px(18.))
+                    .text_color(colors.foreground)
+                    .child(info.sql.clone()),
+            )
+            .when_some(info.error.clone(), |this, error| {
+                this.child(
+                    div()
+                        .p_3()
+                        .rounded(px(8.))
+                        .border_1()
+                        .border_color(colors.danger_foreground.opacity(0.35))
+                        .bg(colors.danger_foreground.opacity(0.06))
+                        .text_size(px(12.))
+                        .text_color(colors.danger_foreground)
+                        .child(error),
+                )
+            })
+            .into_any_element()
     }
 
     /// One tab in the strip: icon, title, optional close button.
@@ -7084,6 +7438,18 @@ mod export_tests {
             ],
             has_more: false,
         }
+    }
+
+    #[test]
+    fn sqlformatter_keeps_short_clauses_inline() {
+        let out = format_sql_text(
+            "select id, name from customers where id > 10 order by id limit 50",
+            "mysql",
+        );
+        assert_eq!(
+            out,
+            "SELECT id, name\nFROM customers\nWHERE id > 10\nORDER BY id\nLIMIT 50"
+        );
     }
 
     #[test]
