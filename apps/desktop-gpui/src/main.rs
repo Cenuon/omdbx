@@ -4859,12 +4859,14 @@ impl Omdbx {
                     Some(editor) => div()
                         .flex_1()
                         .min_h_0()
-                        .p_1()
+                        .px_1()
+                        .pb_1()
                         .child(
                             Editor::new(editor)
                                 .readonly(true)
                                 .appearance(false)
                                 .bordered(false)
+                                .with_size(gpui_kit::component::Size::XSmall)
                                 .h_full(),
                         )
                         .into_any_element(),
