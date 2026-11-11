@@ -5683,7 +5683,7 @@ impl Omdbx {
         };
 
         h_flex()
-            .h(px(34.))
+            .h(px(32.))
             .flex_none()
             .px_3()
             .gap_1()
@@ -5752,77 +5752,43 @@ impl Omdbx {
                 cx.listener(|this, _, _, cx| this.stop_query(cx)),
             ))
             .child(div().flex_1())
-            .child(Self::icon_button(
-                "page-first",
-                Icon::new(AssetIcon::ChevronsLeft)
-                    .with_size(icon_size)
-                    .text_color(muted)
-                    .into_any_element(),
-                colors,
-                cx.listener(|this, _, window, cx| {
-                    if this.table_page != 1 {
-                        this.table_page = 1;
-                        this.load_active(window, cx);
-                    }
-                }),
-            ))
-            .child(Self::icon_button(
-                "page-prev",
-                Icon::new(AssetIcon::ChevronLeft)
-                    .with_size(icon_size)
-                    .text_color(muted)
-                    .into_any_element(),
-                colors,
-                cx.listener(|this, _, window, cx| {
-                    if this.table_page > 1 {
-                        this.table_page -= 1;
-                        this.load_active(window, cx);
-                    }
-                }),
-            ))
             .child(
-                div()
-                    .w(px(42.))
-                    .h(px(24.))
-                    .flex_none()
-                    .flex()
+                h_flex()
+                    .gap_2()
                     .items_center()
-                    .justify_center()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(colors.border)
-                    .text_size(px(12.))
-                    .child(page.to_string()),
+                    .text_size(px(11.))
+                    .text_color(muted)
+                    .child(div().child(format!("第 {page} 页")))
+                    .child(Self::icon_button(
+                        "page-prev",
+                        Icon::new(AssetIcon::ChevronLeft)
+                            .with_size(px(14.))
+                            .text_color(muted)
+                            .into_any_element(),
+                        colors,
+                        cx.listener(|this, _, window, cx| {
+                            if this.table_page > 1 {
+                                this.table_page -= 1;
+                                this.load_active(window, cx);
+                            }
+                        }),
+                    ))
+                    .child(Self::icon_button(
+                        "page-next",
+                        Icon::new(AssetIcon::ChevronRight)
+                            .with_size(px(14.))
+                            .text_color(muted)
+                            .into_any_element(),
+                        colors,
+                        cx.listener(|this, _, window, cx| {
+                            if this.table_has_more {
+                                this.table_page += 1;
+                                this.load_active(window, cx);
+                            }
+                        }),
+                    ))
+                    .child(div().ml_1().child(format!("{} 行/页", ROW_LIMIT))),
             )
-            .child(Self::icon_button(
-                "page-next",
-                Icon::new(AssetIcon::ChevronRight)
-                    .with_size(icon_size)
-                    .text_color(muted)
-                    .into_any_element(),
-                colors,
-                cx.listener(|this, _, window, cx| {
-                    if this.table_has_more {
-                        this.table_page += 1;
-                        this.load_active(window, cx);
-                    }
-                }),
-            ))
-            .child(Self::icon_button(
-                "page-last",
-                Icon::new(AssetIcon::ChevronsRight)
-                    .with_size(icon_size)
-                    .text_color(muted)
-                    .into_any_element(),
-                colors,
-                cx.listener(|this, _, _, cx| {
-                    if !this.table_has_more {
-                        this.show_notice("已经是最后一页", cx)
-                    } else {
-                        this.show_notice("跳到最后未完成", cx)
-                    }
-                }),
-            ))
     }
 
     /// Table with an outer frame, a small gap, and a rounded content area.
