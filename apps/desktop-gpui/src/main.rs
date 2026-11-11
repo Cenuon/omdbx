@@ -1678,6 +1678,9 @@ struct QueryTab {
     key: String,
     title: String,
     editor: Entity<EditorState>,
+    connection_id: String,
+    database: String,
+    schema: String,
 }
 
 #[derive(Clone, Copy)]
@@ -1861,6 +1864,10 @@ struct Omdbx {
     active_query: Option<usize>,
     next_query: u64,
     show_query: bool,
+    schemas: HashMap<String, Vec<String>>,
+    query_connection_open: bool,
+    query_database_open: bool,
+    query_schema_open: bool,
     search: Entity<InputState>,
     filter: String,
     sidebar_open: bool,
@@ -2008,6 +2015,10 @@ impl Omdbx {
             active_query: None,
             next_query: 0,
             show_query: false,
+            schemas: HashMap::new(),
+            query_connection_open: false,
+            query_database_open: false,
+            query_schema_open: false,
             search,
             filter: String::new(),
             sidebar_open: true,
@@ -2260,6 +2271,7 @@ impl Omdbx {
             index
         };
         self.tab_scroll.scroll_to_item(tab_index);
+        self.close_query_menus();
         self.clear_table_filters(window, cx);
         self.load_active(window, cx);
         self.sync_props_if_open(window, cx);
@@ -3293,6 +3305,7 @@ impl Omdbx {
                 self.connections = list;
                 self.error = None;
                 self.databases.clear();
+                self.schemas.clear();
                 self.tables.clear();
             }
             Err(message) => self.error = Some(message),
@@ -3537,8 +3550,10 @@ impl Omdbx {
     fn open_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_running_query();
         self.hide_props_now(cx);
+        self.close_query_menus();
         self.next_query += 1;
         let number = self.next_query;
+        let (connection_id, database, schema) = self.new_query_target();
         let editor = cx.new(|cx| {
             EditorState::new(window, cx)
                 .default_value(
@@ -3550,6 +3565,9 @@ impl Omdbx {
             key: format!("query-{number}"),
             title: format!("查询 {number}"),
             editor,
+            connection_id,
+            database,
+            schema,
         });
         self.active_query = Some(self.queries.len() - 1);
         self.show_query = true;
@@ -3558,8 +3576,26 @@ impl Omdbx {
         cx.notify();
     }
 
-    /// Connection the query runs against: the active table tab, else the first connection.
+    /// Connection the query runs against: the active query tab, else the
+    /// active table tab, else the first connection.
     fn query_target(&self) -> Option<(Connection, String, String)> {
+        if self.show_query {
+            if let Some(query) = self.active_query.and_then(|index| self.queries.get(index)) {
+                if !query.connection_id.is_empty() {
+                    if let Some(connection) = self
+                        .connections
+                        .iter()
+                        .find(|item| item.id == query.connection_id)
+                    {
+                        return Some((
+                            connection.clone(),
+                            query.database.clone(),
+                            query.schema.clone(),
+                        ));
+                    }
+                }
+            }
+        }
         let tab = self.active.and_then(|index| self.tabs.get(index));
         if let Some(tab) = tab {
             let connection = self
@@ -3581,6 +3617,137 @@ impl Omdbx {
             .clone()
             .unwrap_or_else(|| database.clone());
         Some((connection, database, schema))
+    }
+
+    fn ensure_databases(&mut self, connection_id: &str) -> Vec<String> {
+        if connection_id.is_empty() {
+            return Vec::new();
+        }
+        if !self.databases.contains_key(connection_id) {
+            if let Ok(list) = fetch_databases(connection_id) {
+                self.databases.insert(connection_id.to_string(), list);
+            }
+        }
+        self.databases.get(connection_id).cloned().unwrap_or_default()
+    }
+
+    fn ensure_schemas(&mut self, connection_id: &str, database: &str) -> Vec<String> {
+        if connection_id.is_empty() || database.is_empty() {
+            return Vec::new();
+        }
+        let key = format!("{connection_id}|{database}");
+        if !self.schemas.contains_key(&key) {
+            if let Ok(list) = fetch_schemas(connection_id, database) {
+                self.schemas.insert(key.clone(), list);
+            }
+        }
+        self.schemas.get(&key).cloned().unwrap_or_default()
+    }
+
+    /// MySQL-style connections use the database name as the schema; others
+    /// fall back to the connection default, then the first server schema.
+    fn resolve_query_schema(&mut self, connection: &Connection, database: &str) -> String {
+        if database.is_empty() {
+            return String::new();
+        }
+        let schemas = self.ensure_schemas(&connection.id, database);
+        if schemas.iter().any(|item| item == database) {
+            return database.to_string();
+        }
+        connection
+            .default_schema
+            .clone()
+            .filter(|schema| !schema.is_empty())
+            .or_else(|| schemas.first().cloned())
+            .unwrap_or_else(|| database.to_string())
+    }
+
+    fn new_query_target(&mut self) -> (String, String, String) {
+        let Some((connection, mut database, mut schema)) = self.query_target() else {
+            return (String::new(), String::new(), String::new());
+        };
+        if database.is_empty() {
+            database = self
+                .ensure_databases(&connection.id)
+                .last()
+                .cloned()
+                .unwrap_or_default();
+        } else {
+            self.ensure_databases(&connection.id);
+        }
+        self.ensure_schemas(&connection.id, &database);
+        if schema.is_empty() {
+            schema = self.resolve_query_schema(&connection, &database);
+        }
+        (connection.id, database, schema)
+    }
+
+    fn close_query_menus(&mut self) {
+        self.query_connection_open = false;
+        self.query_database_open = false;
+        self.query_schema_open = false;
+    }
+
+    fn set_query_connection(&mut self, connection_id: &str, cx: &mut Context<Self>) {
+        let Some(index) = self.active_query else {
+            return;
+        };
+        let Some(connection) = self
+            .connections
+            .iter()
+            .find(|item| item.id == connection_id)
+            .cloned()
+        else {
+            return;
+        };
+        let database = self
+            .ensure_databases(&connection.id)
+            .last()
+            .cloned()
+            .unwrap_or_default();
+        let schema = self.resolve_query_schema(&connection, &database);
+        if let Some(query) = self.queries.get_mut(index) {
+            query.connection_id = connection.id;
+            query.database = database;
+            query.schema = schema;
+        }
+        self.close_query_menus();
+        cx.notify();
+    }
+
+    fn set_query_database(&mut self, database: &str, cx: &mut Context<Self>) {
+        let Some(index) = self.active_query else {
+            return;
+        };
+        let Some(query) = self.queries.get(index).cloned() else {
+            return;
+        };
+        let Some(connection) = self
+            .connections
+            .iter()
+            .find(|item| item.id == query.connection_id)
+            .cloned()
+        else {
+            return;
+        };
+        let schema = self.resolve_query_schema(&connection, database);
+        if let Some(query) = self.queries.get_mut(index) {
+            query.database = database.to_string();
+            query.schema = schema;
+        }
+        self.close_query_menus();
+        cx.notify();
+    }
+
+    fn set_query_schema(&mut self, schema: &str, cx: &mut Context<Self>) {
+        let Some(index) = self.active_query else {
+            return;
+        };
+        if let Some(query) = self.queries.get_mut(index) {
+            query.schema = schema.to_string();
+        }
+        self.close_query_menus();
+        cx.notify();
     }
 
     fn run_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3711,6 +3878,7 @@ impl Omdbx {
         if index >= self.queries.len() {
             return;
         }
+        self.close_query_menus();
         let was_active = self.show_query && self.active_query == Some(index);
         self.queries.remove(index);
         self.active_query = match self.active_query {
@@ -3835,6 +4003,7 @@ impl Omdbx {
     fn close_all_tabs(&mut self, cx: &mut Context<Self>) {
         self.cancel_running_query();
         self.hide_props_now(cx);
+        self.close_query_menus();
         self.tabs.clear();
         self.queries.clear();
         self.active = None;
@@ -3915,11 +4084,11 @@ fn connection_icon(key: &str, active: bool) -> Icon {
     Icon::default().data(bytes).with_size(px(16.)).text_color(color)
 }
 
-/// The tools row doubles as a popover trigger; the popover only needs
-/// `Selectable`, and the row carries all of the visual state.
-struct ToolsTrigger(gpui_kit::Stateful<gpui_kit::Div>);
+/// Rows used as popover triggers only need `Selectable`; the row itself
+/// carries all of the visual state.
+struct MenuTrigger(gpui_kit::Stateful<gpui_kit::Div>);
 
-impl Selectable for ToolsTrigger {
+impl Selectable for MenuTrigger {
     fn selected(self, _: bool) -> Self {
         self
     }
@@ -3929,12 +4098,72 @@ impl Selectable for ToolsTrigger {
     }
 }
 
-impl IntoElement for ToolsTrigger {
+impl IntoElement for MenuTrigger {
     type Element = <gpui_kit::Stateful<gpui_kit::Div> as IntoElement>::Element;
 
     fn into_element(self) -> Self::Element {
         self.0.into_element()
     }
+}
+
+fn query_menu_row<F>(
+    id: String,
+    label: String,
+    selected: bool,
+    icon: Option<AssetIcon>,
+    colors: gpui_kit::component::ThemeColor,
+    on_click: F,
+) -> gpui_kit::Stateful<gpui_kit::Div>
+where
+    F: Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
+{
+    let muted = colors.muted_foreground;
+    h_flex()
+        .id(SharedString::from(id))
+        .h(px(30.))
+        .px_2()
+        .gap_2()
+        .items_center()
+        .rounded(px(5.))
+        .cursor_pointer()
+        .when(selected, |this| this.bg(colors.secondary))
+        .hover(|style| style.bg(colors.sidebar_accent))
+        .when_some(icon, |this, icon| {
+            this.child(Icon::new(icon).with_size(px(15.)).text_color(muted))
+        })
+        .child(
+            div()
+                .flex_1()
+                .text_size(px(13.))
+                .font_weight(if selected {
+                    FontWeight::MEDIUM
+                } else {
+                    FontWeight::NORMAL
+                })
+                .child(label),
+        )
+        .when(selected, |this| {
+            this.child(
+                Icon::new(AssetIcon::Check)
+                    .with_size(px(14.))
+                    .text_color(colors.primary),
+            )
+        })
+        .on_click(on_click)
+}
+
+fn query_menu_caption(
+    text: &'static str,
+    colors: gpui_kit::component::ThemeColor,
+) -> impl IntoElement {
+    div()
+        .px_2()
+        .pt_1()
+        .pb(px(2.))
+        .text_size(px(11.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(colors.muted_foreground)
+        .child(text)
 }
 
 fn tool_menu_row(
@@ -4220,7 +4449,7 @@ impl Omdbx {
                                     });
                                 }
                             })
-                            .trigger(ToolsTrigger(
+                            .trigger(MenuTrigger(
                                 tree_row(
                                     "menu-tools".to_string(),
                                     12.,
@@ -5673,32 +5902,62 @@ impl Omdbx {
     }
 
     fn query_crumb(
+        id: &'static str,
         label: String,
+        icon: Option<AssetIcon>,
+        open: bool,
         colors: gpui_kit::component::ThemeColor,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> gpui_kit::Stateful<gpui_kit::Div> {
         let muted = colors.muted_foreground;
         h_flex()
-            .id(SharedString::from(format!("crumb-{label}")))
-            .h(px(28.))
-            .px_1()
+            .id(id)
+            .h(px(26.))
+            .px_2()
             .gap_1()
             .items_center()
-            .rounded_md()
+            .rounded(px(6.))
             .cursor_pointer()
+            .text_size(px(13.))
+            .when(open, |this| this.bg(colors.secondary))
             .hover(|style| style.bg(colors.sidebar_accent))
-            .child(div().text_size(px(13.)).child(label))
-            .child(Icon::new(IconName::ChevronDown).xsmall().text_color(muted))
-            .on_click(cx.listener(|this, _, _, cx| this.show_notice("选择未完成", cx)))
+            .when_some(icon, |this, icon| {
+                this.child(Icon::new(icon).with_size(px(15.)).text_color(muted))
+            })
+            .child(div().max_w(px(160.)).truncate().child(label))
+            .child(Icon::new(IconName::ChevronDown).with_size(px(12.)).text_color(muted))
     }
 
     fn query_pane(&self, _tab: &Option<Tab>, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let muted = colors.muted_foreground;
-        let (connection_name, database, schema) = self
-            .query_target()
-            .map(|(connection, database, schema)| (connection.name, database, schema))
-            .unwrap_or_else(|| ("未连接".to_string(), "main".to_string(), "main".to_string()));
+        let (connection_id, database, schema) = self
+            .active_query
+            .and_then(|index| self.queries.get(index))
+            .map(|query| {
+                (
+                    query.connection_id.clone(),
+                    query.database.clone(),
+                    query.schema.clone(),
+                )
+            })
+            .unwrap_or_default();
+        let connection_name = self
+            .connections
+            .iter()
+            .find(|item| item.id == connection_id)
+            .map(|item| item.name.clone())
+            .unwrap_or_else(|| "未连接".to_string());
+        let databases = self
+            .databases
+            .get(&connection_id)
+            .cloned()
+            .unwrap_or_default();
+        let schemas = self
+            .schemas
+            .get(&format!("{connection_id}|{database}"))
+            .cloned()
+            .unwrap_or_default();
+        let weak = cx.entity().downgrade();
         let editor = self
             .active_query
             .and_then(|index| self.queries.get(index))
@@ -5713,6 +5972,239 @@ impl Omdbx {
                 .unwrap_or_else(|| "—".to_string())
         };
 
+        let connection_menu = Popover::new("query-connection-menu")
+            .open(self.query_connection_open)
+            .appearance(false)
+            .offset(px(4.))
+            .on_open_change({
+                let weak = weak.clone();
+                move |open, _, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        this.query_connection_open = *open;
+                        if *open {
+                            this.query_database_open = false;
+                            this.query_schema_open = false;
+                        }
+                        cx.notify();
+                    });
+                }
+            })
+            .trigger(MenuTrigger(Self::query_crumb(
+                "query-connection-trigger",
+                connection_name.clone(),
+                Some(AssetIcon::Database),
+                self.query_connection_open,
+                colors,
+            )))
+            .content({
+                let weak = weak.clone();
+                let connections = self.connections.clone();
+                let selected_id = connection_id.clone();
+                move |_, _, cx| {
+                    let popover = cx.entity().downgrade();
+                    let mut list = v_flex()
+                        .w(px(232.))
+                        .p_1()
+                        .gap(px(1.))
+                        .rounded(px(8.))
+                        .bg(colors.background)
+                        .border_1()
+                        .border_color(colors.border)
+                        .shadow_lg()
+                        .occlude()
+                        .child(query_menu_caption("连接", colors));
+                    if connections.is_empty() {
+                        list = list.child(
+                            div()
+                                .px_2()
+                                .py_2()
+                                .text_size(px(12.))
+                                .text_color(colors.muted_foreground)
+                                .child("暂无连接"),
+                        );
+                    }
+                    for connection in &connections {
+                        let id = connection.id.clone();
+                        let selected = id == selected_id;
+                        let weak = weak.clone();
+                        let popover = popover.clone();
+                        list = list.child(query_menu_row(
+                            format!("query-connection-{id}"),
+                            connection.name.clone(),
+                            selected,
+                            Some(AssetIcon::Database),
+                            colors,
+                            move |_, window, cx| {
+                                let _ = popover
+                                    .update(cx, |state, cx| state.dismiss(window, cx));
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.set_query_connection(&id, cx)
+                                });
+                            },
+                        ));
+                    }
+                    list
+                }
+            });
+
+        let database_menu = Popover::new("query-database-menu")
+            .open(self.query_database_open)
+            .appearance(false)
+            .offset(px(4.))
+            .on_open_change({
+                let weak = weak.clone();
+                move |open, _, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        this.query_database_open = *open;
+                        if *open {
+                            this.query_connection_open = false;
+                            this.query_schema_open = false;
+                        }
+                        cx.notify();
+                    });
+                }
+            })
+            .trigger(MenuTrigger(Self::query_crumb(
+                "query-database-trigger",
+                if database.is_empty() {
+                    "选择数据库".to_string()
+                } else {
+                    database.clone()
+                },
+                None,
+                self.query_database_open,
+                colors,
+            )))
+            .content({
+                let weak = weak.clone();
+                let databases = databases.clone();
+                let selected = database.clone();
+                move |_, _, cx| {
+                    let popover = cx.entity().downgrade();
+                    let mut list = v_flex()
+                        .w(px(232.))
+                        .p_1()
+                        .gap(px(1.))
+                        .rounded(px(8.))
+                        .bg(colors.background)
+                        .border_1()
+                        .border_color(colors.border)
+                        .shadow_lg()
+                        .occlude()
+                        .child(query_menu_caption("数据库", colors));
+                    if databases.is_empty() {
+                        list = list.child(
+                            div()
+                                .px_2()
+                                .py_2()
+                                .text_size(px(12.))
+                                .text_color(colors.muted_foreground)
+                                .child("暂无数据库"),
+                        );
+                    }
+                    for name in &databases {
+                        let value = name.clone();
+                        let is_selected = value == selected;
+                        let weak = weak.clone();
+                        let popover = popover.clone();
+                        list = list.child(query_menu_row(
+                            format!("query-database-{value}"),
+                            value.clone(),
+                            is_selected,
+                            None,
+                            colors,
+                            move |_, window, cx| {
+                                let _ = popover
+                                    .update(cx, |state, cx| state.dismiss(window, cx));
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.set_query_database(&value, cx)
+                                });
+                            },
+                        ));
+                    }
+                    list
+                }
+            });
+
+        let schema_menu = Popover::new("query-schema-menu")
+            .open(self.query_schema_open)
+            .appearance(false)
+            .offset(px(4.))
+            .on_open_change({
+                let weak = weak.clone();
+                move |open, _, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        this.query_schema_open = *open;
+                        if *open {
+                            this.query_connection_open = false;
+                            this.query_database_open = false;
+                        }
+                        cx.notify();
+                    });
+                }
+            })
+            .trigger(MenuTrigger(Self::query_crumb(
+                "query-schema-trigger",
+                if schema.is_empty() {
+                    "选择 Schema".to_string()
+                } else {
+                    schema.clone()
+                },
+                None,
+                self.query_schema_open,
+                colors,
+            )))
+            .content({
+                let weak = weak.clone();
+                let schemas = schemas.clone();
+                let selected = schema.clone();
+                move |_, _, cx| {
+                    let popover = cx.entity().downgrade();
+                    let mut list = v_flex()
+                        .w(px(212.))
+                        .p_1()
+                        .gap(px(1.))
+                        .rounded(px(8.))
+                        .bg(colors.background)
+                        .border_1()
+                        .border_color(colors.border)
+                        .shadow_lg()
+                        .occlude()
+                        .child(query_menu_caption("Schema", colors));
+                    if schemas.is_empty() {
+                        list = list.child(
+                            div()
+                                .px_2()
+                                .py_2()
+                                .text_size(px(12.))
+                                .text_color(colors.muted_foreground)
+                                .child("暂无 Schema"),
+                        );
+                    }
+                    for name in &schemas {
+                        let value = name.clone();
+                        let is_selected = value == selected;
+                        let weak = weak.clone();
+                        let popover = popover.clone();
+                        list = list.child(query_menu_row(
+                            format!("query-schema-{value}"),
+                            value.clone(),
+                            is_selected,
+                            None,
+                            colors,
+                            move |_, window, cx| {
+                                let _ = popover
+                                    .update(cx, |state, cx| state.dismiss(window, cx));
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.set_query_schema(&value, cx)
+                                });
+                            },
+                        ));
+                    }
+                    list
+                }
+            });
+
         v_flex()
             .flex_1()
             .h_full()
@@ -5722,40 +6214,28 @@ impl Omdbx {
                 h_flex()
                     .h(px(36.))
                     .flex_none()
-                    .px_3()
+                    .px_2()
                     .gap_1()
                     .items_center()
                     .border_b_1()
                     .border_color(colors.border)
+                    .child(connection_menu)
                     .child(
-                        h_flex()
-                            .id("query-connection")
-                            .h(px(28.))
-                            .px_2()
-                            .gap_1()
-                            .items_center()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .hover(|style| style.bg(colors.sidebar_accent))
-                            .child(
-                                Icon::new(AssetIcon::Database)
-                                    .with_size(px(16.))
-                                    .text_color(muted),
-                            )
-                            .child(div().text_size(px(13.)).child(connection_name))
-                            .child(
-                                Icon::new(IconName::ChevronDown)
-                                    .xsmall()
-                                    .text_color(muted),
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.show_notice("选择连接未完成", cx)
-                            })),
+                        div()
+                            .px(px(1.))
+                            .text_size(px(12.))
+                            .text_color(muted.opacity(0.55))
+                            .child("/"),
                     )
-                    .child(div().text_size(px(12.)).text_color(muted).child("/"))
-                    .child(Self::query_crumb(database, colors, cx))
-                    .child(div().text_size(px(12.)).text_color(muted).child("/"))
-                    .child(Self::query_crumb(schema, colors, cx))
+                    .child(database_menu)
+                    .child(
+                        div()
+                            .px(px(1.))
+                            .text_size(px(12.))
+                            .text_color(muted.opacity(0.55))
+                            .child("/"),
+                    )
+                    .child(schema_menu)
                     .child(div().flex_1())
                     .child(Self::icon_button(
                         "format-sql",
@@ -6171,6 +6651,7 @@ impl Omdbx {
                     )
                     .on_click(cx.listener(move |this, _, window, cx| match target {
                         CloseTarget::Table(index) => {
+                            this.close_query_menus();
                             this.show_query = false;
                             this.active = Some(index);
                             this.clear_table_filters(window, cx);
@@ -6179,6 +6660,7 @@ impl Omdbx {
                         CloseTarget::Query(index) => {
                             this.cancel_running_query();
                             this.hide_props_now(cx);
+                            this.close_query_menus();
                             this.show_query = true;
                             this.active_query = Some(index);
                             cx.notify();
@@ -6187,6 +6669,7 @@ impl Omdbx {
             }
             None => {
                 chip = chip.on_click(cx.listener(|this, _, _, cx| {
+                    this.close_query_menus();
                     this.show_query = true;
                     cx.notify();
                 }));
