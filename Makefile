@@ -1,9 +1,9 @@
 .DEFAULT_GOAL := dev
 
 PNPM ?= pnpm
-TAURI_DEV_PORT ?= 1420
+GPUI_DIR ?= apps/desktop-gpui
 
-.PHONY: help install docs-install check-tauri-dev-port dev dev-fast dev-web dev-backend build package clean docs docs-build check test cargo-check-fast cargo-test-fast db db-list db-verify db-down db-reset db-check db-completion
+.PHONY: help dev dev-backend build build-backend package-macos clean cargo-check-fast cargo-test-fast db db-list db-verify db-down db-reset db-check db-completion
 
 export DB
 export DB_VERSION
@@ -13,33 +13,19 @@ export DB_PASSWORD
 export FOLLOW
 export CONFIRM
 
-node_modules/.modules.yaml: package.json pnpm-lock.yaml
-	$(PNPM) install --frozen-lockfile
-
-docs/node_modules/.modules.yaml: docs/package.json docs/pnpm-lock.yaml docs/pnpm-workspace.yaml $(wildcard docs/patches/*.patch)
-	cd docs && $(PNPM) install --frozen-lockfile
-
 help:
 	@printf '%s\n' 'DBX development targets:'
 	@printf '%s\n' ''
 	@printf '%s\n' 'App:'
-	@printf '  %-23s %s\n' 'make' 'Start the local desktop development environment'
-	@printf '  %-23s %s\n' 'make dev' 'Start the local desktop development environment'
-	@printf '  %-23s %s\n' 'make dev-fast' 'Start lightweight Tauri dev with DuckDB sidecar support'
-	@printf '  %-23s %s\n' 'make dev-web' 'Start the web frontend development server'
-	@printf '  %-23s %s\n' 'make dev-backend' 'Start the web backend development server'
-	@printf '  %-23s %s\n' 'make build' 'Run type checks and build the desktop frontend'
-	@printf '  %-23s %s\n' 'make package' 'Build the desktop app package'
+	@printf '  %-23s %s\n' 'make' 'Start the dbx-web backend and the GPUI desktop app'
+	@printf '  %-23s %s\n' 'make dev' 'Start the dbx-web backend and the GPUI desktop app'
+	@printf '  %-23s %s\n' 'make dev-backend' 'Start the dbx-web backend only (127.0.0.1:4225)'
+	@printf '  %-23s %s\n' 'make build-backend' 'Build the dbx-web release binary'
+	@printf '  %-23s %s\n' 'make build' 'Build the dbx-web backend and the GPUI app'
+	@printf '  %-23s %s\n' 'make package-macos' 'Build a macOS .app, .dmg, and zip'
 	@printf '  %-23s %s\n' 'make clean' 'Remove local Rust build artifacts and caches'
 	@printf '%s\n' ''
-	@printf '%s\n' 'Docs:'
-	@printf '  %-23s %s\n' 'make docs' 'Start the documentation site development server'
-	@printf '  %-23s %s\n' 'make docs-build' 'Build the documentation site'
-	@printf '  %-23s %s\n' 'make docs-install' 'Install documentation site dependencies'
-	@printf '%s\n' ''
 	@printf '%s\n' 'Checks:'
-	@printf '  %-23s %s\n' 'make check' 'Run project checks'
-	@printf '  %-23s %s\n' 'make test' 'Run project tests'
 	@printf '  %-23s %s\n' 'make cargo-check-fast' 'Run Rust check without default features'
 	@printf '  %-23s %s\n' 'make cargo-test-fast' 'Run Rust tests without default features'
 	@printf '%s\n' ''
@@ -52,64 +38,25 @@ help:
 	@printf '  %-23s %s\n' 'make db-check' 'Validate every recipe and Compose file'
 	@printf '  %-23s %s\n' 'make db-completion' 'Show Bash/Zsh completion setup'
 	@printf '%s\n' ''
-	@printf '%s\n' 'Setup:'
-	@printf '  %-23s %s\n' 'make install' 'Install root project dependencies'
 
-install:
-	$(PNPM) install --frozen-lockfile
+build-backend:
+	cargo build --release -p dbx-web --no-default-features --features duckdb-sidecar,dynamodb,mq-admin,dbx-core/sqlite-bundled
 
-docs-install:
-	cd docs && $(PNPM) install --frozen-lockfile
+dev: build-backend
+	sh $(GPUI_DIR)/dev.sh
 
-ifeq ($(OS),Windows_NT)
-check-tauri-dev-port:
-	@powershell -NoProfile -Command "if (Get-NetTCPConnection -LocalPort $(TAURI_DEV_PORT) -State Listen -ErrorAction SilentlyContinue) { Write-Host 'Port $(TAURI_DEV_PORT) is already in use. DBX Tauri dev requires http://localhost:$(TAURI_DEV_PORT).'; Write-Host ''; Get-NetTCPConnection -LocalPort $(TAURI_DEV_PORT) -State Listen -ErrorAction SilentlyContinue | Format-Table LocalAddress,LocalPort,OwningProcess -AutoSize; Write-Host 'Stop the process above, then run make dev again.'; exit 1 }"
-else
-check-tauri-dev-port:
-	@if lsof -nP -iTCP:$(TAURI_DEV_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
-		echo "Port $(TAURI_DEV_PORT) is already in use. DBX Tauri dev requires http://localhost:$(TAURI_DEV_PORT)."; \
-		echo ""; \
-		lsof -nP -iTCP:$(TAURI_DEV_PORT) -sTCP:LISTEN; \
-		echo ""; \
-		echo "Stop the process above, then run make dev again. Example: kill <PID>"; \
-		exit 1; \
-	fi
-endif
+dev-backend: build-backend
+	sh $(GPUI_DIR)/run-backend.sh
 
-dev: node_modules/.modules.yaml check-tauri-dev-port
-	$(PNPM) dev:tauri
+build: build-backend
+	cd $(GPUI_DIR) && cargo build --release
 
-dev-fast: node_modules/.modules.yaml check-tauri-dev-port
-	# os-keyring must stay in sync with src-tauri defaults: without it the keychain
-	# key is unreadable and the secret-store migration wizard reappears on every launch.
-	RUST_MIN_STACK=16777216 $(PNPM) dev:tauri -- --no-default-features --features duckdb-sidecar,dynamodb,sqlite-bundled,os-keyring,sqlserver-native-attention
-
-dev-web: node_modules/.modules.yaml
-	$(PNPM) dev:web
-
-dev-backend: node_modules/.modules.yaml
-	$(PNPM) dev:backend
-
-build: node_modules/.modules.yaml
-	$(PNPM) build:checked
-
-package: node_modules/.modules.yaml
-	$(PNPM) tauri build
+package-macos: build
+	sh $(GPUI_DIR)/scripts/package-macos.sh
 
 clean:
 	cargo clean
-
-docs: docs/node_modules/.modules.yaml
-	cd docs && ./node_modules/.bin/next dev --hostname 127.0.0.1
-
-docs-build: docs/node_modules/.modules.yaml
-	cd docs && ./node_modules/.bin/next build && node scripts/generate-sitemap.mjs
-
-check: node_modules/.modules.yaml
-	$(PNPM) check
-
-test: node_modules/.modules.yaml
-	$(PNPM) test
+	cd $(GPUI_DIR) && cargo clean
 
 cargo-check-fast:
 	cargo check --no-default-features --features sqlite-bundled

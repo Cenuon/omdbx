@@ -299,6 +299,7 @@ pub struct PopupMenu {
     max_width: Option<Pixels>,
     max_height: Option<Pixels>,
     text_size: Option<Pixels>,
+    font_family: Option<SharedString>,
     bounds: Bounds<Pixels>,
     size: Size,
     check_side: Side,
@@ -349,6 +350,7 @@ impl PopupMenu {
             max_width: None,
             max_height: None,
             text_size: None,
+            font_family: None,
             check_side: Side::Left,
             checkable: HashSet::new(),
             bounds: Bounds::default(),
@@ -450,6 +452,12 @@ impl PopupMenu {
     /// Override the text size for every item in this menu and its submenus.
     pub fn text_size(mut self, size: impl Into<Pixels>) -> Self {
         self.text_size = Some(size.into());
+        self
+    }
+
+    /// Override the font family for every item in this menu and its submenus.
+    pub fn font_family(mut self, family: impl Into<SharedString>) -> Self {
+        self.font_family = Some(family.into());
         self
     }
 
@@ -731,11 +739,15 @@ impl PopupMenu {
         let parent_menu = cx.entity().downgrade();
         let parent_priority = self.priority;
         let parent_text_size = self.text_size;
+        let parent_font_family = self.font_family.clone();
         submenu.update(cx, |view, _| {
             view.parent_menu = Some(parent_menu);
             view.priority = parent_priority + 1;
             if view.text_size.is_none() {
                 view.text_size = parent_text_size;
+            }
+            if view.font_family.is_none() {
+                view.font_family = parent_font_family;
             }
         });
 
@@ -1299,6 +1311,7 @@ impl PopupMenu {
             .relative()
             .text_sm()
             .when_some(self.text_size, |this, size| this.text_size(size))
+            .when_some(self.font_family.clone(), |this, family| this.font_family(family))
             .py_0()
             .px(INNER_PADDING)
             .rounded(radius)
