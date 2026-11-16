@@ -132,7 +132,9 @@ fn backend_is_ready() -> bool {
     agent
         .get(&format!("{API}/api/version"))
         .call()
-        .map(|response| response.status() == 200)
+        // A migration-gated backend is still bound and serving requests: it
+        // answers this endpoint with 423 until the local data upgrade is done.
+        .map(|response| matches!(response.status(), 200 | 423))
         .unwrap_or(false)
 }
 

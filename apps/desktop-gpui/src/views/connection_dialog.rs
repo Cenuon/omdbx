@@ -217,8 +217,16 @@ impl Omdbx {
 
         ui::dialog::modal(
             px(860.),
-            "新建连接",
-            "选择数据库类型，双击或点击下一步继续",
+            if dialog.editing_config.is_some() {
+                "编辑连接"
+            } else {
+                "新建连接"
+            },
+            if dialog.editing_config.is_some() {
+                "可以保留当前类型，也可以更换数据库类型"
+            } else {
+                "选择数据库类型，双击或点击下一步继续"
+            },
             body,
             footer,
             colors,
@@ -562,6 +570,8 @@ impl Omdbx {
                             .min_w(px(104.))
                             .label(if busy == Some(ConnectionDialogBusy::Save) {
                                 "保存中…"
+                            } else if dialog.editing_config.is_some() {
+                                "保存修改"
                             } else {
                                 "保存连接"
                             })
@@ -587,7 +597,11 @@ impl Omdbx {
             .child(form);
         ui::dialog::modal(
             px(680.),
-            "连接配置",
+            if dialog.editing_config.is_some() {
+                "编辑连接"
+            } else {
+                "连接配置"
+            },
             subtitle,
             form.into_any_element(),
             footer,

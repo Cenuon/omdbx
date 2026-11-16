@@ -149,4 +149,120 @@ impl Omdbx {
         ui::dialog::modal(px(380.), title, hint, body, footer, colors)
     }
 
+    pub(crate) fn text_prompt_overlay(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let colors = cx.theme().colors;
+        let Some(dialog) = self.text_prompt.as_ref() else {
+            return div().into_any_element();
+        };
+        let input = dialog.input.clone();
+        let error = dialog.error.clone();
+        let ok = cx.entity().downgrade();
+        let cancel = ok.clone();
+        let body = v_flex()
+            .gap(px(8.))
+            .child(
+                Input::new(&input)
+                    .appearance(true)
+                    .bordered(true)
+                    .focus_bordered(true)
+                    .w_full()
+                    .with_size(gpui_kit::component::Size::Medium),
+            )
+            .when_some(error, |this, error| {
+                this.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(colors.danger_foreground)
+                        .child(error),
+                )
+            })
+            .into_any_element();
+        let footer = h_flex()
+            .justify_end()
+            .gap(px(8.))
+            .child(
+                Button::new("text-prompt-cancel")
+                    .ghost()
+                    .with_size(gpui_kit::component::Size::Medium)
+                    .min_w(px(84.))
+                    .label("取消")
+                    .on_click(move |_, _, cx| {
+                        let _ = cancel.update(cx, |this, cx| {
+                            this.text_prompt = None;
+                            cx.notify();
+                        });
+                    }),
+            )
+            .child(
+                Button::new("text-prompt-ok")
+                    .primary()
+                    .with_size(gpui_kit::component::Size::Medium)
+                    .min_w(px(84.))
+                    .label("确定")
+                    .on_click(move |_, _, cx| {
+                        let _ = ok.update(cx, |this, cx| this.submit_text_prompt(cx));
+                    }),
+            )
+            .into_any_element();
+        ui::dialog::modal(
+            px(420.),
+            dialog.title.clone(),
+            dialog.subtitle.clone(),
+            body,
+            footer,
+            colors,
+        )
+    }
+
+    pub(crate) fn confirm_dialog_overlay(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let colors = cx.theme().colors;
+        let Some(dialog) = self.confirm_dialog.as_ref() else {
+            return div().into_any_element();
+        };
+        let ok = cx.entity().downgrade();
+        let cancel = ok.clone();
+        let body = div()
+            .w_full()
+            .text_size(px(13.))
+            .line_height(px(20.))
+            .text_color(colors.foreground)
+            .child(dialog.message.clone())
+            .into_any_element();
+        let footer = h_flex()
+            .justify_end()
+            .gap(px(8.))
+            .child(
+                Button::new("confirm-cancel")
+                    .ghost()
+                    .with_size(gpui_kit::component::Size::Medium)
+                    .min_w(px(84.))
+                    .label("取消")
+                    .on_click(move |_, _, cx| {
+                        let _ = cancel.update(cx, |this, cx| {
+                            this.confirm_dialog = None;
+                            cx.notify();
+                        });
+                    }),
+            )
+            .child(
+                Button::new("confirm-ok")
+                    .danger()
+                    .with_size(gpui_kit::component::Size::Medium)
+                    .min_w(px(84.))
+                    .label(dialog.confirm_label.clone())
+                    .on_click(move |_, _, cx| {
+                        let _ = ok.update(cx, |this, cx| this.submit_confirm_dialog(cx));
+                    }),
+            )
+            .into_any_element();
+        ui::dialog::modal(
+            px(430.),
+            dialog.title.clone(),
+            "此操作会立即生效",
+            body,
+            footer,
+            colors,
+        )
+    }
+
 }

@@ -1,8 +1,18 @@
 use crate::*;
 use super::common::*;
+use super::connection_menu::{connection_context_menu, ConnectionMenuState};
+
+fn text_matches(filter: &str, text: &str) -> bool {
+    filter.is_empty() || text.to_lowercase().contains(filter)
+}
 
 impl Omdbx {
-    pub(crate) fn connection_row(&self, connection: &Connection, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn connection_row(
+        &self,
+        connection: &Connection,
+        depth: f32,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let is_open =
             self.open_connections.contains(&connection.id) || !self.filter.trim().is_empty();
         let active = is_open
@@ -16,12 +26,15 @@ impl Omdbx {
             .unwrap_or_else(|| connection.db_type.clone());
         let id = connection.id.clone();
         let colors = cx.theme().colors;
-        h_flex()
+        let starred = self.stars.iter().any(|id| id == &connection.id);
+        let color = connection.color().map(str::to_string);
+        let mut row = h_flex()
             .id(SharedString::from(format!("conn-{}", connection.id)))
+            .relative()
             .h(px(32.))
             .flex_none()
             .mx_2()
-            .pl(px(12.))
+            .pl(px(12. + depth * 16.))
             .pr_2()
             .gap_2()
             .items_center()
@@ -30,15 +43,76 @@ impl Omdbx {
             .text_size(px(13.))
             .hover(|style| style.bg(colors.sidebar_accent))
             .child(connection_icon(&key, active))
-            .child(div().min_w_0().truncate().child(connection.name.clone()))
-            .child(div().flex_1())
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle_connection(&id, cx)))
+            .child(div().min_w_0().truncate().child(connection.name.clone()));
+        if starred {
+            row = row.child(div().flex_1()).child(
+                Icon::new(AssetIcon::StarFill)
+                    .with_size(px(11.))
+                    .text_color(gpui_kit::rgb(0xD9B23C)),
+            );
+        } else {
+            row = row.child(div().flex_1());
+        }
+        if let Some(color) = color.as_deref() {
+            if color.eq_ignore_ascii_case("rainbow") {
+                row = row.child(
+                    h_flex()
+                        .absolute()
+                        .left_0()
+                        .top(px(7.))
+                        .bottom(px(7.))
+                        .w(px(3.))
+                        .rounded_full()
+                        .overflow_hidden()
+                        .items_start()
+                        .justify_center()
+                        .child(
+                            v_flex()
+                                .size_full()
+                                .child(div().flex_1().w_full().bg(gpui_kit::rgb(0xE5534B)))
+                                .child(div().flex_1().w_full().bg(gpui_kit::rgb(0xD9B23C)))
+                                .child(div().flex_1().w_full().bg(gpui_kit::rgb(0x4F9D69)))
+                                .child(div().flex_1().w_full().bg(gpui_kit::rgb(0x3F7FD0)))
+                                .child(div().flex_1().w_full().bg(gpui_kit::rgb(0x8A6BD1))),
+                        ),
+                );
+            } else if let Some(color) = connection_color_value(color) {
+                row = row.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top(px(7.))
+                        .bottom(px(7.))
+                        .w(px(3.))
+                        .rounded_full()
+                        .bg(color),
+                );
+            }
+        }
+        let menu_state = ConnectionMenuState {
+            connection: connection.clone(),
+            folders: self.folders.clone(),
+            stars: self.stars.clone(),
+            profiles: self
+                .connection_profiles
+                .get(&connection.id)
+                .cloned()
+                .unwrap_or_default(),
+            active_profile: self.active_profiles.get(&connection.id).cloned(),
+            show_empty_databases: self.show_empty_databases,
+        };
+        let app = cx.entity().downgrade();
+        row.on_click(cx.listener(move |this, _, _, cx| this.toggle_connection(&id, cx)))
+            .context_menu(move |menu, window, cx| {
+                connection_context_menu(menu, window, cx, app.clone(), menu_state.clone())
+            })
     }
 
     pub(crate) fn database_row(
         &self,
         connection_id: &str,
         database: &str,
+        depth: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let colors = cx.theme().colors;
@@ -46,12 +120,151 @@ impl Omdbx {
         let db_name = database.to_string();
         tree_row(
             format!("db-{connection_id}|{database}"),
-            28.0,
+            28.0 + depth * 16.,
             Icon::new(AssetIcon::Database),
             database.to_string(),
             colors,
             cx.listener(move |this, _, _, cx| this.toggle_database(&conn_id, &db_name, cx)),
         )
+    }
+
+    fn folder_row(&self, folder: &SidebarFolder, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors;
+        let open = self.open_folders.contains(&folder.id);
+        let count = folder
+            .connections
+            .iter()
+            .filter(|id| self.connections.iter().any(|connection| &connection.id == *id))
+            .count();
+        let id = folder.id.clone();
+        h_flex()
+            .id(SharedString::from(format!("folder-{}", folder.id)))
+            .h(px(32.))
+            .flex_none()
+            .mx_2()
+            .pl(px(8.))
+            .pr_2()
+            .gap_2()
+            .items_center()
+            .rounded_md()
+            .cursor_pointer()
+            .text_size(px(13.))
+            .hover(|style| style.bg(colors.sidebar_accent))
+            .child(
+                Icon::new(if open {
+                    AssetIcon::ChevronDown
+                } else {
+                    AssetIcon::ChevronRight
+                })
+                .with_size(px(13.))
+                .text_color(colors.muted_foreground),
+            )
+            .child(
+                Icon::new(if open {
+                    AssetIcon::FolderOpen
+                } else {
+                    AssetIcon::Folder
+                })
+                .with_size(px(15.))
+                .text_color(colors.muted_foreground),
+            )
+            .child(div().min_w_0().truncate().child(folder.name.clone()))
+            .child(div().flex_1())
+            .child(
+                div()
+                    .text_size(px(10.5))
+                    .text_color(colors.muted_foreground)
+                    .child(count.to_string()),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if !this.open_folders.remove(&id) {
+                    this.open_folders.insert(id.clone());
+                }
+                cx.notify();
+            }))
+    }
+
+    fn append_connection_rows(
+        &self,
+        connection: &Connection,
+        depth: f32,
+        searching: bool,
+        filter: &str,
+        rows: &mut Vec<gpui_kit::AnyElement>,
+        entries: &mut Vec<TreeEntry>,
+        cx: &mut Context<Self>,
+    ) {
+        let colors = cx.theme().colors;
+        let conn_match = text_matches(filter, &connection.name) || text_matches(filter, &connection.db_type);
+        let mut children = Vec::new();
+        let mut child_entries = Vec::new();
+
+        for database in self
+            .databases
+            .get(&connection.id)
+            .cloned()
+            .unwrap_or_default()
+        {
+            let key = format!("{}|{}", connection.id, database);
+            if !searching
+                && !self.show_empty_databases
+                && self.database_has_tables.get(&key) == Some(&false)
+            {
+                continue;
+            }
+            let db_match = text_matches(filter, &database);
+            let tables = self.tables.get(&key).cloned().unwrap_or_default();
+            let any_table_match = tables.iter().any(|table| text_matches(filter, table));
+            if searching && !conn_match && !db_match && !any_table_match {
+                continue;
+            }
+
+            let db_open = self.open_databases.contains(&key) || searching;
+            children.push(
+                self.database_row(&connection.id, &database, depth, cx)
+                    .into_any_element(),
+            );
+            child_entries.push(TreeEntry::Database(connection.id.clone(), database.clone()));
+            if !db_open {
+                continue;
+            }
+
+            for table in tables {
+                if searching && !conn_match && !db_match && !text_matches(filter, &table) {
+                    continue;
+                }
+                let conn_id = connection.id.clone();
+                let db_name = database.clone();
+                let table_name = table.clone();
+                children.push(
+                    tree_row(
+                        format!("t-{}|{}|{}", connection.id, database, table),
+                        44.0 + depth * 16.,
+                        Icon::new(AssetIcon::Table2),
+                        table.clone(),
+                        colors,
+                        cx.listener(move |this, _, window, cx| {
+                            this.open_table(&conn_id, &db_name, &table_name, window, cx)
+                        }),
+                    )
+                    .into_any_element(),
+                );
+                child_entries.push(TreeEntry::Table(
+                    connection.id.clone(),
+                    database.clone(),
+                ));
+            }
+        }
+
+        if searching && !conn_match && children.is_empty() {
+            return;
+        }
+        rows.push(self.connection_row(connection, depth, cx).into_any_element());
+        entries.push(TreeEntry::Connection(connection.id.clone()));
+        if self.open_connections.contains(&connection.id) || searching {
+            rows.extend(children);
+            entries.extend(child_entries);
+        }
     }
 
     /// Sidebar tree, narrowed to rows matching the search field. While a query
@@ -61,78 +274,68 @@ impl Omdbx {
         &self,
         cx: &mut Context<Self>,
     ) -> (Vec<gpui_kit::AnyElement>, Vec<TreeEntry>) {
-        let colors = cx.theme().colors;
         let filter = self.filter.trim().to_lowercase();
         let searching = !filter.is_empty();
-        let matches = |text: &str| filter.is_empty() || text.to_lowercase().contains(&filter);
-
         let mut rows = Vec::new();
         let mut entries = Vec::new();
-        for connection in &self.connections {
-            let conn_match = matches(&connection.name) || matches(&connection.db_type);
-            let mut children = Vec::new();
-            let mut child_entries = Vec::new();
 
-            for database in self
-                .databases
-                .get(&connection.id)
-                .cloned()
-                .unwrap_or_default()
-            {
-                let key = format!("{}|{}", connection.id, database);
-                let db_match = matches(&database);
-                let tables = self.tables.get(&key).cloned().unwrap_or_default();
-                let any_table_match = tables.iter().any(|table| matches(table));
-                if searching && !conn_match && !db_match && !any_table_match {
-                    continue;
-                }
-
-                let db_open = self.open_databases.contains(&key) || searching;
-                children.push(self.database_row(&connection.id, &database, cx).into_any_element());
-                child_entries.push(TreeEntry::Database(
-                    connection.id.clone(),
-                    database.clone(),
-                ));
-                if !db_open {
-                    continue;
-                }
-
-                for table in tables {
-                    if searching && !conn_match && !db_match && !matches(&table) {
-                        continue;
-                    }
-                    let conn_id = connection.id.clone();
-                    let db_name = database.clone();
-                    let table_name = table.clone();
-                    children.push(
-                        tree_row(
-                            format!("t-{}|{}|{}", connection.id, database, table),
-                            44.0,
-                            Icon::new(AssetIcon::Table2),
-                            table.clone(),
-                            colors,
-                            cx.listener(move |this, _, window, cx| {
-                                this.open_table(&conn_id, &db_name, &table_name, window, cx)
-                            }),
-                        )
-                        .into_any_element(),
-                    );
-                    child_entries.push(TreeEntry::Table(
-                        connection.id.clone(),
-                        database.clone(),
-                    ));
-                }
+        if searching {
+            for connection in &self.connections {
+                self.append_connection_rows(
+                    connection,
+                    0.0,
+                    true,
+                    &filter,
+                    &mut rows,
+                    &mut entries,
+                    cx,
+                );
             }
+            return (rows, entries);
+        }
 
-            if searching && !conn_match && children.is_empty() {
+        let mut placed = HashSet::new();
+        for folder in &self.folders {
+            rows.push(self.folder_row(folder, cx).into_any_element());
+            entries.push(TreeEntry::Folder(folder.id.clone()));
+            if !self.open_folders.contains(&folder.id) {
+                placed.extend(folder.connections.iter().cloned());
                 continue;
             }
-            rows.push(self.connection_row(connection, cx).into_any_element());
-            entries.push(TreeEntry::Connection(connection.id.clone()));
-            if self.open_connections.contains(&connection.id) || searching {
-                rows.extend(children);
-                entries.extend(child_entries);
+            for connection_id in &folder.connections {
+                if !placed.insert(connection_id.clone()) {
+                    continue;
+                }
+                if let Some(connection) = self
+                    .connections
+                    .iter()
+                    .find(|connection| &connection.id == connection_id)
+                {
+                    self.append_connection_rows(
+                        connection,
+                        1.0,
+                        false,
+                        &filter,
+                        &mut rows,
+                        &mut entries,
+                        cx,
+                    );
+                }
             }
+        }
+        for connection in &self.connections {
+            if placed.contains(&connection.id) {
+                continue;
+            }
+            self.append_connection_rows(
+                connection,
+                0.0,
+                false,
+                &filter,
+                &mut rows,
+                &mut entries,
+                cx,
+            );
         }
         (rows, entries)
     }
@@ -152,10 +355,17 @@ impl Omdbx {
         if top_index == 0 {
             return Vec::new();
         }
+        if let Some(TreeEntry::Folder(folder_id)) = entries.get(top_index) {
+            let Some(folder) = self.folders.iter().find(|folder| &folder.id == folder_id) else {
+                return Vec::new();
+            };
+            return vec![self.folder_row(folder, cx).into_any_element()];
+        }
         let (connection_id, database) = match entries.get(top_index) {
             Some(TreeEntry::Connection(connection_id)) => (connection_id, None),
             Some(TreeEntry::Database(connection_id, database)) => (connection_id, Some(database)),
             Some(TreeEntry::Table(connection_id, database)) => (connection_id, Some(database)),
+            Some(TreeEntry::Folder(_)) => return Vec::new(),
             None => return Vec::new(),
         };
         let Some(connection) = self
@@ -165,9 +375,23 @@ impl Omdbx {
         else {
             return Vec::new();
         };
-        let mut rows = vec![self.connection_row(connection, cx).into_any_element()];
+        let depth = if self
+            .folders
+            .iter()
+            .any(|folder| folder.connections.iter().any(|id| id == connection_id))
+        {
+            1.0
+        } else {
+            0.0
+        };
+        let mut rows = vec![self
+            .connection_row(connection, depth, cx)
+            .into_any_element()];
         if let Some(database) = database {
-            rows.push(self.database_row(connection_id, database, cx).into_any_element());
+            rows.push(
+                self.database_row(connection_id, database, depth, cx)
+                    .into_any_element(),
+            );
         }
         rows
     }

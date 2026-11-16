@@ -1,6 +1,7 @@
 pub(crate) mod chrome;
 pub(crate) mod common;
 pub(crate) mod connection_dialog;
+pub(crate) mod connection_menu;
 pub(crate) mod editor;
 pub(crate) mod props;
 pub(crate) mod overlays;

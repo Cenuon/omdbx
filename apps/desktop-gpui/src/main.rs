@@ -37,14 +37,15 @@ use gpui_kit::{
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollHandle,
     SharedString, Styled, Window, WindowOptions,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-gpui_kit::actions!(omdbx, [RefreshConnections, ConfirmTab, ConfirmEnter, SuggestUp, SuggestDown]);
+gpui_kit::actions!(omdbx, [RefreshConnections, NewQuery, ConfirmTab, ConfirmEnter, SuggestUp, SuggestDown]);
 
 #[macro_use]
 mod actions;
 mod backend;
+mod connections;
 mod grid;
 mod ui;
 mod views;
@@ -257,9 +258,37 @@ struct Connection {
     driver_profile: Option<String>,
     #[serde(default)]
     default_schema: Option<String>,
+    /// The complete backend config, flattened so edits, colors and duplicated
+    /// connections round-trip every field the generic dialog does not edit.
+    #[serde(flatten)]
+    config: serde_json::Value,
 }
 
 impl Connection {
+    fn full_config(&self) -> serde_json::Value {
+        let mut config = self.config.clone();
+        if !config.is_object() {
+            config = json!({});
+        }
+        config["id"] = json!(self.id);
+        config["name"] = json!(self.name);
+        config["db_type"] = json!(self.db_type);
+        if let Some(profile) = &self.driver_profile {
+            config["driver_profile"] = json!(profile);
+        }
+        if let Some(schema) = &self.default_schema {
+            config["default_schema"] = json!(schema);
+        }
+        config
+    }
+
+    fn color(&self) -> Option<&str> {
+        self.config
+            .get("color")
+            .and_then(serde_json::Value::as_str)
+            .filter(|color| !color.trim().is_empty())
+    }
+
     /// Dialect identifier quoting (the server has an endpoint for this, but the
     /// convention below matches it for every backend we support).
     fn quote(&self, name: &str) -> String {
@@ -269,6 +298,36 @@ impl Connection {
             _ => format!("\"{}\"", name.replace('"', "\"\"")),
         }
     }
+}
+
+fn connection_color_value(value: &str) -> Option<Hsla> {
+    if value.eq_ignore_ascii_case("rainbow") {
+        return None;
+    }
+    let hex = value.trim().trim_start_matches('#');
+    if hex.len() != 6 && hex.len() != 8 {
+        return None;
+    }
+    let rgb = u32::from_str_radix(&hex[..6], 16).ok()?;
+    Some(gpui_kit::rgb(rgb).into())
+}
+
+fn connection_type_for_config(config: &serde_json::Value) -> DatabaseTypeSpec {
+    let profile = config
+        .get("driver_profile")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let db_type = config
+        .get("db_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    DATABASE_TYPES
+        .iter()
+        .find(|spec| !profile.is_empty() && spec.key == profile)
+        .or_else(|| DATABASE_TYPES.iter().find(|spec| spec.key == db_type))
+        .or_else(|| DATABASE_TYPES.iter().find(|spec| spec.db_type == db_type))
+        .copied()
+        .unwrap_or(DATABASE_TYPES[0])
 }
 
 fn fetch_connections() -> Result<Vec<Connection>, String> {
@@ -1348,6 +1407,77 @@ enum CloseTarget {
     Query(usize),
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct SidebarFolder {
+    id: String,
+    name: String,
+    #[serde(default)]
+    connections: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ConnectionProfile {
+    id: String,
+    name: String,
+    config: serde_json::Value,
+}
+
+fn default_show_empty_databases() -> bool {
+    true
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct OmdbxSidebarSettings {
+    #[serde(default)]
+    folders: Vec<SidebarFolder>,
+    #[serde(default)]
+    stars: Vec<String>,
+    #[serde(default)]
+    profiles: HashMap<String, Vec<ConnectionProfile>>,
+    #[serde(default)]
+    active_profiles: HashMap<String, String>,
+    #[serde(default = "default_show_empty_databases")]
+    show_empty_databases: bool,
+}
+
+impl Default for OmdbxSidebarSettings {
+    fn default() -> Self {
+        Self {
+            folders: Vec::new(),
+            stars: Vec::new(),
+            profiles: HashMap::new(),
+            active_profiles: HashMap::new(),
+            show_empty_databases: true,
+        }
+    }
+}
+
+enum PromptAction {
+    NewFolder,
+    RenameFolder(String),
+    NewProfile(String),
+}
+
+struct TextPromptDialog {
+    title: String,
+    subtitle: String,
+    input: Entity<InputState>,
+    action: PromptAction,
+    error: Option<String>,
+}
+
+enum ConfirmAction {
+    DeleteConnection(String),
+    DeleteFolder(String),
+}
+
+struct ConfirmDialog {
+    title: String,
+    message: String,
+    confirm_label: String,
+    action: ConfirmAction,
+}
+
 #[derive(Clone)]
 struct Tab {
     key: String,
@@ -1499,6 +1629,7 @@ const SQL_KEYWORDS: [&str; 20] = [
 
 /// What each flat tree row represents, used to pin ancestors while scrolling.
 enum TreeEntry {
+    Folder(String),
     Connection(String),
     Database(String, String),
     Table(String, String),
@@ -1659,6 +1790,7 @@ enum ConnectionDialogBusy {
 
 struct NewConnectionDialog {
     id: String,
+    editing_config: Option<serde_json::Value>,
     step: ConnectionDialogStep,
     category: DatabaseCategory,
     selected: DatabaseTypeSpec,
@@ -1677,6 +1809,14 @@ struct NewConnectionDialog {
 
 struct Omdbx {
     connections: Vec<Connection>,
+    folders: Vec<SidebarFolder>,
+    open_folders: HashSet<String>,
+    stars: Vec<String>,
+    connection_profiles: HashMap<String, Vec<ConnectionProfile>>,
+    active_profiles: HashMap<String, String>,
+    sidebar_layout_root: serde_json::Value,
+    show_empty_databases: bool,
+    database_has_tables: HashMap<String, bool>,
     error: Option<String>,
     open_connections: HashSet<String>,
     databases: HashMap<String, Vec<String>>,
@@ -1719,6 +1859,8 @@ struct Omdbx {
     column_vis_open: bool,
     width_dialog: Option<WidthDialog>,
     connection_dialog: Option<NewConnectionDialog>,
+    text_prompt: Option<TextPromptDialog>,
+    confirm_dialog: Option<ConfirmDialog>,
     pending_edits: HashMap<(usize, usize), PendingEdit>,
     new_rows: HashSet<usize>,
     pending_deletes: HashMap<usize, Vec<(String, String, String)>>,
@@ -1826,6 +1968,7 @@ impl Render for Omdbx {
             .size_full()
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &RefreshConnections, _, cx| this.reload(cx)))
+            .on_action(cx.listener(|this, _: &NewQuery, window, cx| this.open_query(window, cx)))
             .on_action(cx.listener(|_, _: &ConfirmEnter, window, cx| {
                 window.dispatch_action(
                     Box::new(Enter {
@@ -1853,6 +1996,12 @@ impl Render for Omdbx {
             })
             .when(self.connection_dialog.is_some(), |this| {
                 this.child(self.connection_dialog_overlay(cx))
+            })
+            .when(self.text_prompt.is_some(), |this| {
+                this.child(self.text_prompt_overlay(cx))
+            })
+            .when(self.confirm_dialog.is_some(), |this| {
+                this.child(self.confirm_dialog_overlay(cx))
             })
             .when_some(self.notice.clone(), |this, notice| {
                 this.child(
@@ -1882,11 +2031,12 @@ fn main() {
     let backend = backend::Backend::start()
         .map_err(|error| eprintln!("OMDBX backend startup failed: {error}"))
         .ok();
+    let quit_backend = backend.clone();
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx: &mut App| {
         gpui_kit::init(cx);
-        if let Some(backend) = backend {
+        if let Some(backend) = quit_backend {
             cx.on_app_quit(move |_| {
                 backend.stop();
                 async {}
@@ -1895,6 +2045,7 @@ fn main() {
         }
         cx.bind_keys([
             gpui_kit::KeyBinding::new("cmd-r", RefreshConnections, None),
+            gpui_kit::KeyBinding::new("cmd-y", NewQuery, None),
             gpui_kit::KeyBinding::new("tab", ConfirmTab, Some("Input")),
             gpui_kit::KeyBinding::new("enter", ConfirmEnter, Some("Input")),
             gpui_kit::KeyBinding::new("shift-enter", ConfirmEnter, Some("Input")),
@@ -1949,6 +2100,7 @@ mod export_tests {
             db_type: "mysql".into(),
             driver_profile: None,
             default_schema: None,
+            config: json!({}),
         }
     }
 

@@ -68,6 +68,17 @@ impl Omdbx {
             Ok(list) => (list, None),
             Err(message) => (Vec::new(), Some(message)),
         };
+        let sidebar_layout_root = crate::connections::load_sidebar_layout_root();
+        let sidebar: OmdbxSidebarSettings = sidebar_layout_root
+            .get("omdbx")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        let mut connection_profiles = sidebar.profiles;
+        let profiles_seeded = crate::connections::ensure_default_connection_profiles(
+            &connections,
+            &mut connection_profiles,
+        );
         // open the first connection straight away, like the Electron build does
         let mut open_connections = HashSet::new();
         let mut databases = HashMap::new();
@@ -79,8 +90,20 @@ impl Omdbx {
         } else if error.is_none() {
             // no connections saved yet
         }
-        let this = Self {
+        let mut this = Self {
             connections,
+            open_folders: sidebar
+                .folders
+                .iter()
+                .map(|folder| folder.id.clone())
+                .collect(),
+            folders: sidebar.folders,
+            stars: sidebar.stars,
+            connection_profiles,
+            active_profiles: sidebar.active_profiles,
+            sidebar_layout_root,
+            show_empty_databases: sidebar.show_empty_databases,
+            database_has_tables: HashMap::new(),
             error,
             open_connections,
             databases,
@@ -123,6 +146,8 @@ impl Omdbx {
             column_vis_open: false,
             width_dialog: None,
             connection_dialog: None,
+            text_prompt: None,
+            confirm_dialog: None,
             pending_edits: HashMap::new(),
             new_rows: HashSet::new(),
             pending_deletes: HashMap::new(),
@@ -162,6 +187,12 @@ impl Omdbx {
             order_suppress_open: false,
             order_selected: 0,
         };
+        if profiles_seeded {
+            this.persist_sidebar_layout();
+        }
+        if !this.show_empty_databases {
+            this.refresh_empty_database_status(cx);
+        }
         this.check_for_update(cx);
         this
     }
@@ -234,6 +265,7 @@ impl Omdbx {
         search.update(cx, |state, cx| state.focus(window, cx));
         self.connection_dialog = Some(NewConnectionDialog {
             id: uuid::Uuid::new_v4().to_string(),
+            editing_config: None,
             step: ConnectionDialogStep::Pick,
             category: selected.category,
             selected,
@@ -246,6 +278,99 @@ impl Omdbx {
             database,
             ssl: false,
             save_password: true,
+            busy: None,
+            result: None,
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn open_edit_connection_dialog(
+        &mut self,
+        connection_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_query_menus();
+        let Some(connection) = self
+            .connections
+            .iter()
+            .find(|connection| connection.id == connection_id)
+            .cloned()
+        else {
+            return;
+        };
+        let config = connection.full_config();
+        let selected = connection_type_for_config(&config);
+        let value = |key: &str| {
+            config
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        let port = config
+            .get("port")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(selected.default_port as u64) as u16;
+        let ssl = config
+            .get("ssl")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let save_password = config
+            .get("save_password")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true);
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索数据库类型"));
+        let name = cx.new(|cx| {
+            let mut state = InputState::new(window, cx).placeholder("连接名称");
+            state.set_value(value("name"), window, cx);
+            state
+        });
+        let host = cx.new(|cx| {
+            let mut state = InputState::new(window, cx).placeholder(if selected.local_file {
+                "数据库文件路径"
+            } else {
+                "主机地址"
+            });
+            state.set_value(value("host"), window, cx);
+            state
+        });
+        let port = cx.new(|cx| {
+            let mut state = InputState::new(window, cx).placeholder("端口");
+            state.set_value(port.to_string(), window, cx);
+            state
+        });
+        let username = cx.new(|cx| {
+            let mut state = InputState::new(window, cx).placeholder("用户名");
+            state.set_value(value("username"), window, cx);
+            state
+        });
+        let password = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .placeholder("留空则保留原密码")
+        });
+        let database = cx.new(|cx| {
+            let mut state = InputState::new(window, cx).placeholder("可选");
+            state.set_value(value("database"), window, cx);
+            state
+        });
+        host.update(cx, |state, cx| state.focus(window, cx));
+        self.connection_dialog = Some(NewConnectionDialog {
+            id: connection.id,
+            editing_config: Some(config),
+            step: ConnectionDialogStep::Form,
+            category: selected.category,
+            selected,
+            search,
+            name,
+            host,
+            port,
+            username,
+            password,
+            database,
+            ssl,
+            save_password,
             busy: None,
             result: None,
         });
@@ -288,6 +413,11 @@ impl Omdbx {
         };
         dialog.step = ConnectionDialogStep::Form;
         dialog.result = None;
+        if dialog.editing_config.is_some() {
+            dialog.host.update(cx, |state, cx| state.focus(window, cx));
+            cx.notify();
+            return;
+        }
         dialog.host.update(cx, |state, cx| state.set_value("", window, cx));
         dialog
             .port
@@ -361,22 +491,32 @@ impl Omdbx {
         };
         let database = dialog.database.read(cx).value().trim().to_string();
         let password = dialog.password.read(cx).value().to_string();
-        let mut config = json!({
-            "id": dialog.id,
-            "name": name,
-            "db_type": dialog.selected.db_type,
-            "host": host,
-            "port": port,
-            "username": username,
-            "password": password,
-            "save_password": dialog.save_password,
-            "ssl": dialog.ssl,
-        });
+        let mut config = dialog
+            .editing_config
+            .clone()
+            .filter(serde_json::Value::is_object)
+            .unwrap_or_else(|| json!({}));
+        config["id"] = json!(dialog.id);
+        config["name"] = json!(name);
+        config["db_type"] = json!(dialog.selected.db_type);
+        config["host"] = json!(host);
+        config["port"] = json!(port);
+        config["username"] = json!(username);
+        config["save_password"] = json!(dialog.save_password);
+        config["ssl"] = json!(dialog.ssl);
+        if dialog.editing_config.is_none() || !password.is_empty() {
+            config["password"] = json!(password);
+        }
+        if let Some(object) = config.as_object_mut() {
+            object.remove("driver_profile");
+        }
         if let Some(profile) = dialog.selected.driver_profile {
             config["driver_profile"] = json!(profile);
         }
         if !database.is_empty() {
             config["database"] = json!(database);
+        } else if let Some(object) = config.as_object_mut() {
+            object.remove("database");
         }
         Ok((config, dialog.id.clone()))
     }
@@ -455,6 +595,7 @@ impl Omdbx {
             dialog.result = None;
         }
         cx.notify();
+        let config_id = config["id"].as_str().unwrap_or_default().to_string();
         let task = cx
             .background_executor()
             .spawn(async move { save_connection_config(&config) });
@@ -464,6 +605,8 @@ impl Omdbx {
                 match result {
                     Ok(()) => {
                         this.connection_dialog = None;
+                        this.active_profiles.remove(&config_id);
+                        this.persist_sidebar_layout();
                         this.reload(cx);
                         this.show_notice("连接已保存", cx);
                     }
@@ -502,6 +645,8 @@ impl Omdbx {
                 .unwrap_or_else(|| database.to_string());
             match fetch_tables(connection_id, database, &schema) {
                 Ok(list) => {
+                    self.database_has_tables
+                        .insert(key.clone(), !list.is_empty());
                     self.tables.insert(key.clone(), list);
                     self.error = None;
                 }
@@ -544,6 +689,13 @@ impl Omdbx {
             }
         }
         self.open_connections.insert(tab.connection_id.clone());
+        if let Some(folder) = self
+            .folders
+            .iter()
+            .find(|folder| folder.connections.contains(&tab.connection_id))
+        {
+            self.open_folders.insert(folder.id.clone());
+        }
 
         let key = format!("{}|{}", tab.connection_id, tab.database);
         if !self.tables.contains_key(&key) {
@@ -581,33 +733,108 @@ impl Omdbx {
     /// Flat index of a table row among the tree's direct children, mirroring the
     /// row order built in `tree`.
     pub(crate) fn tree_index_of_table(&self, tab: &Tab) -> Option<usize> {
-        let mut index = 0;
-        for connection in &self.connections {
-            index += 1; // connection row
-            if !self.open_connections.contains(&connection.id) {
+        let mut index = 0usize;
+        let mut placed = HashSet::new();
+        let mut target_index = None;
+        for folder in &self.folders {
+            index += 1; // folder header
+            if !self.open_folders.contains(&folder.id) {
+                placed.extend(folder.connections.iter().cloned());
                 continue;
             }
-            let Some(databases) = self.databases.get(&connection.id) else {
+            for connection_id in &folder.connections {
+                if !placed.insert(connection_id.clone()) {
+                    continue;
+                }
+                let Some(connection) = self
+                    .connections
+                    .iter()
+                    .find(|connection| &connection.id == connection_id)
+                else {
+                    continue;
+                };
+                if let Some(found) = self.tree_table_offset(connection, tab, index) {
+                    target_index = Some(found);
+                }
+                index += self.tree_connection_height(connection);
+            }
+        }
+        if target_index.is_some() {
+            return target_index;
+        }
+        for connection in &self.connections {
+            if placed.contains(&connection.id) {
                 continue;
-            };
-            for database in databases {
-                let key = format!("{}|{}", connection.id, database);
-                let open = self.open_databases.contains(&key);
-                if connection.id == tab.connection_id && database == &tab.database {
-                    if !open {
-                        return None;
-                    }
-                    return self
-                        .tables
-                        .get(&key)?
-                        .iter()
-                        .position(|name| name == &tab.table)
-                        .map(|position| index + 1 + position);
+            }
+            if let Some(found) = self.tree_table_offset(connection, tab, index) {
+                target_index = Some(found);
+            }
+            index += self.tree_connection_height(connection);
+        }
+        target_index
+    }
+
+    fn tree_connection_height(&self, connection: &Connection) -> usize {
+        let mut height = 1;
+        if !self.open_connections.contains(&connection.id) {
+            return height;
+        }
+        for database in self
+            .databases
+            .get(&connection.id)
+            .cloned()
+            .unwrap_or_default()
+        {
+            let key = format!("{}|{}", connection.id, database);
+            if !self.show_empty_databases
+                && self.database_has_tables.get(&key) == Some(&false)
+            {
+                continue;
+            }
+            height += 1;
+            if self.open_databases.contains(&key) {
+                height += self.tables.get(&key).map_or(0, Vec::len);
+            }
+        }
+        height
+    }
+
+    fn tree_table_offset(
+        &self,
+        connection: &Connection,
+        tab: &Tab,
+        start: usize,
+    ) -> Option<usize> {
+        if connection.id != tab.connection_id || !self.open_connections.contains(&connection.id) {
+            return None;
+        }
+        let mut index = start + 1;
+        for database in self
+            .databases
+            .get(&connection.id)
+            .cloned()
+            .unwrap_or_default()
+        {
+            let key = format!("{}|{}", connection.id, database);
+            if !self.show_empty_databases
+                && self.database_has_tables.get(&key) == Some(&false)
+            {
+                continue;
+            }
+            if database == tab.database {
+                if !self.open_databases.contains(&key) {
+                    return None;
                 }
-                index += 1; // database row
-                if open {
-                    index += self.tables.get(&key).map_or(0, Vec::len);
-                }
+                return self
+                    .tables
+                    .get(&key)?
+                    .iter()
+                    .position(|name| name == &tab.table)
+                    .map(|position| index + 1 + position);
+            }
+            index += 1;
+            if self.open_databases.contains(&key) {
+                index += self.tables.get(&key).map_or(0, Vec::len);
             }
         }
         None
@@ -1783,16 +2010,77 @@ impl Omdbx {
     }
 
     pub(crate) fn reload(&mut self, cx: &mut Context<Self>) {
+        let open_connections = self.open_connections.clone();
+        let open_databases = self.open_databases.clone();
         match fetch_connections() {
             Ok(list) => {
                 self.connections = list;
                 self.error = None;
-                self.databases.clear();
-                self.schemas.clear();
-                self.tables.clear();
             }
             Err(message) => self.error = Some(message),
         }
+        if crate::connections::ensure_default_connection_profiles(
+            &self.connections,
+            &mut self.connection_profiles,
+        ) {
+            self.persist_sidebar_layout();
+        }
+        let valid_connections: HashSet<String> = self
+            .connections
+            .iter()
+            .map(|connection| connection.id.clone())
+            .collect();
+        self.open_connections
+            .retain(|id| valid_connections.contains(id));
+        self.databases.clear();
+        self.schemas.clear();
+        self.tables.clear();
+        self.database_has_tables.clear();
+        for connection_id in open_connections {
+            if !valid_connections.contains(&connection_id) {
+                continue;
+            }
+            if let Ok(databases) = fetch_databases(&connection_id) {
+                self.databases.insert(connection_id.clone(), databases);
+                self.open_connections.insert(connection_id);
+            }
+        }
+        for key in open_databases {
+            let Some((connection_id, database)) = key.split_once('|') else {
+                continue;
+            };
+            if !self
+                .databases
+                .get(connection_id)
+                .is_some_and(|databases| databases.iter().any(|item| item == database))
+            {
+                continue;
+            }
+            let Some(connection) = self
+                .connections
+                .iter()
+                .find(|connection| connection.id == connection_id)
+                .cloned()
+            else {
+                continue;
+            };
+            let schema = connection
+                .default_schema
+                .clone()
+                .or_else(|| {
+                    fetch_schemas(connection_id, database)
+                        .ok()
+                        .and_then(|schemas| schemas.into_iter().next())
+                })
+                .unwrap_or_else(|| database.to_string());
+            if let Ok(tables) = fetch_tables(connection_id, database, &schema) {
+                self.database_has_tables
+                    .insert(key.clone(), !tables.is_empty());
+                self.tables.insert(key.clone(), tables);
+                self.open_databases.insert(key);
+            }
+        }
+        self.refresh_empty_database_status(cx);
         cx.notify();
     }
 
@@ -2205,19 +2493,129 @@ impl Omdbx {
         self.cancel_running_query();
         self.hide_props_now(cx);
         self.close_query_menus();
+        let (connection_id, database, schema) = self.new_query_target();
+        self.push_query(
+            connection_id,
+            database,
+            schema,
+            "查询",
+            "SELECT id, name\nFROM customers\nWHERE id > 10\nORDER BY id\nLIMIT 50",
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn open_query_for_connection(
+        &mut self,
+        connection_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cancel_running_query();
+        self.hide_props_now(cx);
+        self.close_query_menus();
+        let Some(connection) = self
+            .connections
+            .iter()
+            .find(|connection| connection.id == connection_id)
+            .cloned()
+        else {
+            return;
+        };
+        let database = self
+            .databases
+            .get(connection_id)
+            .and_then(|databases| databases.first())
+            .cloned()
+            .or_else(|| {
+                connection
+                    .config
+                    .get("database")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        let schema = connection
+            .default_schema
+            .clone()
+            .unwrap_or_else(|| database.clone());
+        self.push_query(
+            connection.id,
+            database,
+            schema,
+            "查询",
+            "SELECT id, name\nFROM customers\nWHERE id > 10\nORDER BY id\nLIMIT 50",
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn open_command_line(
+        &mut self,
+        connection_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cancel_running_query();
+        self.hide_props_now(cx);
+        self.close_query_menus();
+        let Some(connection) = self
+            .connections
+            .iter()
+            .find(|connection| connection.id == connection_id)
+            .cloned()
+        else {
+            return;
+        };
+        let database = self
+            .databases
+            .get(connection_id)
+            .and_then(|databases| databases.first())
+            .cloned()
+            .or_else(|| {
+                connection
+                    .config
+                    .get("database")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        let schema = connection
+            .default_schema
+            .clone()
+            .unwrap_or_else(|| database.clone());
+        self.push_query(
+            connection.id,
+            database,
+            schema,
+            "命令行",
+            "",
+            window,
+            cx,
+        );
+    }
+
+    fn push_query(
+        &mut self,
+        connection_id: String,
+        database: String,
+        schema: String,
+        title_prefix: &str,
+        sql: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.next_query += 1;
         let number = self.next_query;
-        let (connection_id, database, schema) = self.new_query_target();
+        let sql = sql.to_string();
         let editor = cx.new(|cx| {
             EditorState::new(window, cx)
-                .default_value(
-                    "SELECT id, name\nFROM customers\nWHERE id > 10\nORDER BY id\nLIMIT 50",
-                )
+                .default_value(sql)
                 .language("sql")
         });
         self.queries.push(QueryTab {
             key: format!("query-{number}"),
-            title: format!("查询 {number}"),
+            title: format!("{title_prefix} {number}"),
             editor,
             connection_id,
             database,
